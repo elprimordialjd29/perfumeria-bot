@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🌺 Bot Perfumería — Guía de Instalación</title>
+<style>
+  :root {
+    --verde: #25D366;
+    --verde-dark: #128C7E;
+    --azul: #075E54;
+    --gris: #ECE5DD;
+    --gris2: #f0f2f5;
+    --blanco: #ffffff;
+    --texto: #111;
+    --naranja: #FF6B00;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: var(--gris2); color: var(--texto); }
+
+  /* HEADER */
+  .header {
+    background: linear-gradient(135deg, var(--azul) 0%, var(--verde-dark) 100%);
+    color: white; padding: 32px 24px; text-align: center;
+  }
+  .header h1 { font-size: 2rem; margin-bottom: 8px; }
+  .header p { opacity: .85; font-size: 1.1rem; }
+  .badge { display:inline-block; background:var(--naranja); color:white; border-radius:20px; padding:4px 14px; font-size:.8rem; font-weight:700; margin-top:10px; }
+
+  /* TABS */
+  .tabs { display: flex; background: var(--azul); overflow-x: auto; }
+  .tab { padding: 14px 22px; color: rgba(255,255,255,.7); cursor: pointer; white-space: nowrap; border-bottom: 3px solid transparent; font-size: .95rem; transition:.2s; }
+  .tab.active { color: white; border-bottom-color: var(--verde); font-weight: 700; }
+  .tab:hover { color: white; background: rgba(255,255,255,.1); }
+
+  /* CONTENT */
+  .content { display: none; max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+  .content.active { display: block; }
+
+  /* STEPS */
+  .steps { display: flex; flex-direction: column; gap: 20px; }
+  .step {
+    background: white; border-radius: 16px; padding: 24px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    border-left: 5px solid var(--verde);
+  }
+  .step-num {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--verde); color: white;
+    display: inline-flex; align-items:center; justify-content:center;
+    font-weight: 700; font-size: 1.1rem; margin-bottom: 12px;
+  }
+  .step h3 { font-size: 1.15rem; margin-bottom: 10px; }
+  .step p { color: #555; line-height: 1.6; margin-bottom: 8px; }
+  .step .url-link {
+    display: inline-block; background: #f0f8ff; border: 1px solid #4a9eff;
+    color: #0066cc; padding: 8px 16px; border-radius: 8px;
+    text-decoration: none; font-weight: 600; margin: 6px 0;
+  }
+  code {
+    background: #1e1e1e; color: #4fc1ff; padding: 12px 16px;
+    border-radius: 10px; display: block; font-family: 'Courier New', monospace;
+    font-size: .9rem; margin: 10px 0; overflow-x: auto; white-space: pre;
+  }
+  code .comment { color: #6a9955; }
+  code .string { color: #ce9178; }
+  .inline-code { background:#f0f0f0; color:#e44; padding:2px 6px; border-radius:4px; font-family:monospace; font-size:.9em; }
+  .tip {
+    background: #fff8e1; border-left: 4px solid #ffc107;
+    padding: 12px 16px; border-radius: 0 8px 8px 0; margin-top: 10px;
+    font-size: .9rem; color: #555;
+  }
+  .success {
+    background: #e8f5e9; border-left: 4px solid var(--verde);
+    padding: 12px 16px; border-radius: 0 8px 8px 0; margin-top: 10px;
+  }
+  .img-placeholder {
+    background: #e8f5e9; border: 2px dashed var(--verde);
+    border-radius: 12px; padding: 30px; text-align: center;
+    color: var(--verde-dark); font-size: 1.5rem; margin: 12px 0;
+  }
+
+  /* SUPABASE GUIDE */
+  .sb-step { display:flex; gap:16px; align-items:flex-start; padding:16px; background:#f8f9fa; border-radius:12px; margin:10px 0; }
+  .sb-num { min-width:32px; height:32px; background:var(--verde-dark); color:white; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; }
+  .sb-content { flex:1; }
+  .sb-content strong { display:block; margin-bottom:4px; font-size:1rem; }
+  .sb-content span { color:#555; font-size:.9rem; }
+  .screenshot-box {
+    background: #1a1a2e; border-radius: 12px; padding: 16px; margin: 10px 0;
+    font-family: monospace; font-size: .85rem;
+  }
+  .screenshot-box .menu-item { color: #4fc1ff; padding: 4px 8px; cursor:pointer; }
+  .screenshot-box .menu-item:hover { background: rgba(255,255,255,.1); border-radius:4px; }
+  .screenshot-box .arrow { color: #ffd700; }
+
+  /* WHATSAPP PREVIEW */
+  .phone {
+    background: #1c1c1c; border-radius: 40px; padding: 20px 12px;
+    max-width: 340px; margin: 0 auto; box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  }
+  .phone-screen { background: var(--gris); border-radius: 28px; overflow: hidden; }
+  .wa-header {
+    background: var(--azul); color: white;
+    padding: 12px 16px; display: flex; align-items: center; gap: 10px;
+  }
+  .wa-avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--verde); display: flex; align-items:center; justify-content:center;
+    font-size: 1.3rem;
+  }
+  .wa-header-info h4 { font-size: .95rem; }
+  .wa-header-info span { font-size: .75rem; opacity: .8; }
+  .wa-chat { padding: 12px; min-height: 400px; display: flex; flex-direction:column; gap: 8px; }
+  .msg {
+    max-width: 85%; padding: 8px 12px; border-radius: 12px;
+    font-size: .82rem; line-height: 1.5; position: relative;
+  }
+  .msg.user { background: #dcf8c6; align-self: flex-end; border-bottom-right-radius: 4px; }
+  .msg.bot { background: white; align-self: flex-start; border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .msg strong { display: block; color: var(--verde-dark); font-size: .75rem; margin-bottom: 2px; }
+  .msg .time { font-size: .68rem; color: #999; text-align: right; margin-top: 4px; }
+  .msg .tick { color: #4fc3f7; }
+
+  /* REPORTS PREVIEW */
+  .report-card {
+    background: white; border-radius: 16px; padding: 20px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.08); margin-bottom: 16px;
+  }
+  .report-card h3 { color: var(--verde-dark); margin-bottom: 16px; display:flex; align-items:center; gap:8px; }
+  .progress-bar-wrap { background: #e0e0e0; border-radius: 20px; height: 18px; overflow: hidden; margin: 10px 0; }
+  .progress-bar { height: 100%; border-radius: 20px; background: linear-gradient(90deg, var(--verde), #00c853); transition: width .5s; }
+  .ranking-row { display:flex; align-items:center; gap:12px; padding:10px; background:#f8f9fa; border-radius:10px; margin:6px 0; }
+  .ranking-medal { font-size: 1.4rem; }
+  .ranking-info { flex:1; }
+  .ranking-info .name { font-weight:700; font-size: .95rem; }
+  .ranking-info .sub { font-size: .8rem; color: #666; }
+  .ranking-amount { font-weight:700; color: var(--verde-dark); font-size: .95rem; }
+  .stat-grid { display:grid; grid-template-columns: repeat(2,1fr); gap:10px; }
+  .stat-box { background:#f0f8ff; border-radius:10px; padding:14px; text-align:center; }
+  .stat-box .num { font-size: 1.3rem; font-weight:700; color:var(--verde-dark); }
+  .stat-box .lbl { font-size:.75rem; color:#666; margin-top:2px; }
+
+  /* COMMANDS */
+  .cmd-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr)); gap:10px; }
+  .cmd-card { background:white; border-radius:12px; padding:14px; box-shadow:0 2px 8px rgba(0,0,0,.06); }
+  .cmd-card .cmd { color:var(--verde-dark); font-family:monospace; font-weight:700; font-size:.9rem; }
+  .cmd-card .desc { color:#555; font-size:.82rem; margin-top:4px; }
+
+  /* RESPONSIVE */
+  @media(max-width:600px) { .header h1 { font-size:1.5rem; } .stat-grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🌺 Bot Vendedor de Perfumería</h1>
+  <p>WhatsApp + VectorPOS + Groq AI + Supabase</p>
+  <span class="badge">✨ 100% GRATIS</span>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('instalar')">🚀 Instalación</div>
+  <div class="tab" onclick="showTab('supabase')">🗄️ Supabase</div>
+  <div class="tab" onclick="showTab('groq')">🤖 Groq AI</div>
+  <div class="tab" onclick="showTab('preview')">📱 Vista Previa</div>
+  <div class="tab" onclick="showTab('reportes')">📊 Reportes</div>
+  <div class="tab" onclick="showTab('comandos')">⌨️ Comandos</div>
+</div>
+
+<!-- ═══════════════ INSTALACIÓN ═══════════════ -->
+<div class="content active" id="tab-instalar">
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-num">1</div>
+      <h3>Crear el archivo de configuración <code>.env</code></h3>
+      <p>Dentro de la carpeta <span class="inline-code">perfumeria-bot</span>, crea un archivo llamado <strong>.env</strong> con este contenido:</p>
+      <code><span class="comment"># IA GRATIS</span>
+GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+<span class="comment"># Base de datos</span>
+SUPABASE_URL=https://xxxxxxxxxxx.supabase.co
+SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6...
+
+<span class="comment"># VectorPOS</span>
+VECTORPOS_ID=A21431100100001
+VECTORPOS_USER=<span class="string">jd_vanegas@hotmail.com</span>
+VECTORPOS_PASS=<span class="string">Vanegas01*</span>
+
+<span class="comment"># Tu número admin (recibes los reportes)</span>
+ADMIN_PHONE=3005643045
+
+<span class="comment"># Meta mensual en pesos</span>
+META_MENSUAL=10000000
+TZ=America/Bogota</code>
+      <div class="tip">💡 El archivo <code>.env</code> va en la misma carpeta que <code>index.js</code></div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">2</div>
+      <h3>Crear las tablas en Supabase</h3>
+      <p>Ve a la pestaña <strong>🗄️ Supabase</strong> de esta guía para ver el proceso paso a paso.</p>
+    </div>
+
+    <div class="step">
+      <div class="step-num">3</div>
+      <h3>Obtener API Key de Groq (gratis)</h3>
+      <p>Ve a la pestaña <strong>🤖 Groq AI</strong> para ver cómo obtener la key en 2 minutos.</p>
+    </div>
+
+    <div class="step">
+      <div class="step-num">4</div>
+      <h3>Iniciar el bot</h3>
+      <p>Abre una terminal en la carpeta <span class="inline-code">perfumeria-bot</span> y ejecuta:</p>
+      <code>npm start</code>
+      <p>Verás un código QR en la terminal:</p>
+      <div class="img-placeholder">
+        ██████████████<br>
+        ██  ▄▄▄▄▄  ██&nbsp;&nbsp;&larr; Código QR<br>
+        ██  █   █  ██<br>
+        ██████████████
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">5</div>
+      <h3>Escanear el QR con WhatsApp</h3>
+      <p>En tu celular:</p>
+      <p>📱 <strong>WhatsApp → ⋮ Menú → Dispositivos vinculados → Vincular dispositivo</strong></p>
+      <p>Apunta la cámara al QR de la terminal.</p>
+      <div class="success">✅ Cuando veas <strong>"Bot de Perfumería ACTIVO"</strong> en la terminal, ¡el bot está funcionando!</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">6</div>
+      <h3>Configurar tu número como administrador</h3>
+      <p>Envía este mensaje al número del bot desde tu WhatsApp:</p>
+      <code>/setadmin</code>
+      <p>O, como ya pusiste <span class="inline-code">ADMIN_PHONE=3005643045</span> en el .env, ¡se configura solo al iniciar!</p>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════ SUPABASE ═══════════════ -->
+<div class="content" id="tab-supabase">
+  <div class="report-card">
+    <h3>🗄️ Crear la base de datos en Supabase (gratis)</h3>
+
+    <div class="sb-step">
+      <div class="sb-num">1</div>
+      <div class="sb-content">
+        <strong>Crear cuenta gratuita</strong>
+        <span>Ve a <a href="https://supabase.com" target="_blank" style="color:var(--verde-dark)">supabase.com</a> → <b>Start your project</b> → Sign up con Google o email</span>
+      </div>
+    </div>
+
+    <div class="sb-step">
+      <div class="sb-num">2</div>
+      <div class="sb-content">
+        <strong>Crear un nuevo proyecto</strong>
+        <span>Clic en <b>"New Project"</b> → Elige un nombre (ej: "perfumeria-bot") → Elige región → <b>Create new project</b></span>
+      </div>
+    </div>
+
+    <div class="sb-step">
+      <div class="sb-num">3</div>
+      <div class="sb-content">
+        <strong>Ir al SQL Editor</strong>
+        <span>En el menú izquierdo busca: <b>SQL Editor</b> (ícono de código)</span>
+      </div>
+    </div>
+
+    <div class="screenshot-box">
+      <div style="color:#888; font-size:.8rem; margin-bottom:8px;">Panel Supabase — menú izquierdo:</div>
+      <div class="menu-item">🏠 Home</div>
+      <div class="menu-item">📊 Table Editor</div>
+      <div class="menu-item" style="background:rgba(255,255,255,.15); color:#4fc1ff;">📝 SQL Editor  <span class="arrow">← AQUÍ</span></div>
+      <div class="menu-item">🔐 Authentication</div>
+      <div class="menu-item">⚙️ Settings</div>
+    </div>
+
+    <div class="sb-step">
+      <div class="sb-num">4</div>
+      <div class="sb-content">
+        <strong>Pegar y ejecutar el script SQL</strong>
+        <span>Abre el archivo <b>supabase-setup.sql</b> de tu proyecto, copia TODO el contenido y pégalo en el editor → clic en <b>"Run"</b> (botón verde)</span>
+      </div>
+    </div>
+
+    <code><span class="comment">-- Esto crea las 4 tablas automáticamente:</span>
+✅ ventas          (registro de ventas del bot)
+✅ productos       (catálogo de perfumes)
+✅ config          (configuración del bot)
+✅ ventas_pos      (datos de VectorPOS)</code>
+
+    <div class="sb-step">
+      <div class="sb-num">5</div>
+      <div class="sb-content">
+        <strong>Obtener las credenciales</strong>
+        <span>Ve a <b>Settings → API</b> en el menú izquierdo</span>
+      </div>
+    </div>
+
+    <div class="screenshot-box">
+      <div style="color:#888; font-size:.8rem; margin-bottom:8px;">Settings → API — copia estos dos valores:</div>
+      <div style="color:#4fc1ff; margin:6px 0;">📌 Project URL</div>
+      <div style="color:#ce9178; font-size:.82rem; margin-left:16px;">https://xxxxxxxxxxx.supabase.co</div>
+      <div style="color:#888; margin-left:16px; font-size:.75rem;">↳ Esto es tu SUPABASE_URL</div>
+      <br>
+      <div style="color:#4fc1ff; margin:6px 0;">🔑 anon / public key</div>
+      <div style="color:#ce9178; font-size:.82rem; margin-left:16px;">eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...</div>
+      <div style="color:#888; margin-left:16px; font-size:.75rem;">↳ Esto es tu SUPABASE_KEY</div>
+    </div>
+
+    <div class="sb-step">
+      <div class="sb-num">6</div>
+      <div class="sb-content">
+        <strong>Pegar en el archivo .env</strong>
+        <span>Copia esos dos valores y pégalos en el .env como se muestra en la pestaña de Instalación</span>
+      </div>
+    </div>
+
+    <div class="success">✅ ¡Supabase listo! La base de datos guarda las ventas automáticamente en la nube.</div>
+  </div>
+</div>
+
+<!-- ═══════════════ GROQ ═══════════════ -->
+<div class="content" id="tab-groq">
+  <div class="report-card">
+    <h3>🤖 Obtener API Key de Groq (gratis — 2 minutos)</h3>
+
+    <div class="sb-step">
+      <div class="sb-num">1</div>
+      <div class="sb-content">
+        <strong>Crear cuenta gratuita</strong>
+        <span>Ve a <a href="https://console.groq.com" target="_blank" style="color:var(--verde-dark)">console.groq.com</a> → <b>Sign Up</b> → Puedes entrar con Google</span>
+      </div>
+    </div>
+
+    <div class="sb-step">
+      <div class="sb-num">2</div>
+      <div class="sb-content">
+        <strong>Crear API Key</strong>
+        <span>En el menú izquierdo: <b>API Keys</b> → <b>Create API Key</b> → Dale un nombre (ej: "perfumeria") → <b>Submit</b></span>
+      </div>
+    </div>
+
+    <div class="screenshot-box">
+      <div style="color:#888; font-size:.8rem; margin-bottom:8px;">console.groq.com — menú:</div>
+      <div class="menu-item">💬 Playground</div>
+      <div class="menu-item" style="background:rgba(255,255,255,.15); color:#4fc1ff;">🔑 API Keys  <span class="arrow">← AQUÍ</span></div>
+      <div class="menu-item">📊 Usage</div>
+    </div>
+
+    <div class="sb-step">
+      <div class="sb-num">3</div>
+      <div class="sb-content">
+        <strong>Copiar la key</strong>
+        <span>Copia la key que empieza con <b>gsk_...</b> y pégala en el .env</span>
+      </div>
+    </div>
+
+    <code>GROQ_API_KEY=<span class="string">gsk_abc123def456...</span></code>
+
+    <div class="report-card" style="background:#f0f8ff; margin-top:16px;">
+      <h3 style="color:#0066cc;">📊 Límites del plan gratis de Groq</h3>
+      <div class="stat-grid">
+        <div class="stat-box">
+          <div class="num">14,400</div>
+          <div class="lbl">requests / día</div>
+        </div>
+        <div class="stat-box">
+          <div class="num">500K</div>
+          <div class="lbl">tokens / minuto</div>
+        </div>
+        <div class="stat-box">
+          <div class="num">Llama 3.3</div>
+          <div class="lbl">70B — modelo</div>
+        </div>
+        <div class="stat-box">
+          <div class="num">$0</div>
+          <div class="lbl">costo total</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ PREVIEW WHATSAPP ═══════════════ -->
+<div class="content" id="tab-preview">
+  <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px,1fr)); gap:24px;">
+
+    <!-- Chat cliente -->
+    <div>
+      <h3 style="text-align:center; margin-bottom:16px; color:var(--verde-dark);">💬 Chat con Cliente</h3>
+      <div class="phone">
+        <div class="phone-screen">
+          <div class="wa-header">
+            <div class="wa-avatar">🌺</div>
+            <div class="wa-header-info">
+              <h4>Perfumería Bot</h4>
+              <span>en línea</span>
+            </div>
+          </div>
+          <div class="wa-chat">
+            <div class="msg user">Hola, busco un perfume para mi mamá<div class="time">10:32 <span class="tick">✓✓</span></div></div>
+            <div class="msg bot"><strong>🌺 Nico</strong>¡Hola! Qué lindo detalle 🌸 ¿Qué tipo de fragancias le gustan a tu mamá? ¿Florales, orientales, frescas o amaderadas?<div class="time">10:32</div></div>
+            <div class="msg user">Le gustan las florales<div class="time">10:33 <span class="tick">✓✓</span></div></div>
+            <div class="msg bot"><strong>🌺 Nico</strong>¡Perfecto! Para ella tenemos:<br><br>🌹 <b>Chanel No.5</b> — $85.000<br>Clásico floral con jazmín y rosa<br><br>🌸 <b>Miss Dior</b> — $92.000<br>Peonia y grasa de rosa<br><br>¿Cuál te llama más la atención?<div class="time">10:33</div></div>
+            <div class="msg user">El Chanel, cuánto queda?<div class="time">10:34 <span class="tick">✓✓</span></div></div>
+            <div class="msg bot"><strong>🌺 Nico</strong>¡Tenemos 3 unidades disponibles! 🤩 ¿Te lo empaco para regalo?<div class="time">10:34</div></div>
+            <div class="msg user">Sí, lo llevo!<div class="time">10:35 <span class="tick">✓✓</span></div></div>
+            <div class="msg bot"><strong>🌺 Nico</strong>✅ ¡Excelente elección! El Chanel No.5 por $85.000 queda registrado. ¡Gracias por tu compra! 🌺<div class="time">10:35</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notificación al admin -->
+    <div>
+      <h3 style="text-align:center; margin-bottom:16px; color:var(--verde-dark);">🔔 Notificación al Admin</h3>
+      <div class="phone">
+        <div class="phone-screen">
+          <div class="wa-header">
+            <div class="wa-avatar">🤖</div>
+            <div class="wa-header-info">
+              <h4>Bot Perfumería</h4>
+              <span>Notificaciones</span>
+            </div>
+          </div>
+          <div class="wa-chat">
+            <div class="msg bot">🔔 <b>NUEVA VENTA REGISTRADA</b><br><br>📦 Producto: <b>Chanel No.5</b><br>🔢 Cantidad: 1<br>💰 Total: <b>$85.000</b><br>👤 Vendedor: bot<br>⏰ 10:35 AM<div class="time">10:35</div></div>
+            <div class="msg bot">🔴 <b>VENTAS VECTORPOS - 2026-04-07</b><br><br>💵 <b>Hoy:</b> $380.000 (12 tickets)<br><br>📊 <b>Mes:</b><br>🟢🟢⚪⚪⚪⚪⚪⚪⚪⚪ 18.5%<br>💰 $1.850.000 / $10.000.000<br>🎯 Necesitas/día: $367.000<br><br>👥 <b>RANKING CAJEROS:</b><br>🥇 MOISES DE ALBA $3.78M<br>🥈 MICHELL INFANTE $2.27M<br>🥉 Admin $380K<div class="time">8:00 PM</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════ REPORTES ═══════════════ -->
+<div class="content" id="tab-reportes">
+
+  <div class="report-card">
+    <h3>📊 Reporte Diario — 8:00 PM</h3>
+    <div class="stat-grid">
+      <div class="stat-box">
+        <div class="num">$991.000</div>
+        <div class="lbl">Ventas mes (POS)</div>
+      </div>
+      <div class="stat-box">
+        <div class="num">9.9%</div>
+        <div class="lbl">Meta alcanzada</div>
+      </div>
+      <div class="stat-box">
+        <div class="num">$391.696</div>
+        <div class="lbl">Necesitas/día</div>
+      </div>
+      <div class="stat-box">
+        <div class="num">23 días</div>
+        <div class="lbl">Quedan este mes</div>
+      </div>
+    </div>
+
+    <h3 style="margin:20px 0 10px; color:var(--verde-dark);">🎯 Progreso Meta $10.000.000</h3>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" style="width:9.9%"></div>
+    </div>
+    <p style="font-size:.85rem; color:#666; margin-top:6px;">$991.000 de $10.000.000 — <b>9.9%</b> completado</p>
+  </div>
+
+  <div class="report-card">
+    <h3>👥 Ranking Cajeros del Mes (VectorPOS)</h3>
+    <div class="ranking-row">
+      <div class="ranking-medal">🥇</div>
+      <div class="ranking-info">
+        <div class="name">MOISES DE ALBA</div>
+        <div class="sub">142 tickets · Efectivo + Bancolombia</div>
+      </div>
+      <div class="ranking-amount">$3.784.950</div>
+    </div>
+    <div class="ranking-row">
+      <div class="ranking-medal">🥈</div>
+      <div class="ranking-info">
+        <div class="name">MICHELL INFANTE</div>
+        <div class="sub">82 tickets · Efectivo + Nequi</div>
+      </div>
+      <div class="ranking-amount">$2.272.000</div>
+    </div>
+    <div class="ranking-row">
+      <div class="ranking-medal">🥉</div>
+      <div class="ranking-info">
+        <div class="name">Admin</div>
+        <div class="sub">18 tickets</div>
+      </div>
+      <div class="ranking-amount">$380.000</div>
+    </div>
+  </div>
+
+  <div class="report-card">
+    <h3>⏰ Horario de Reportes Automáticos</h3>
+    <div class="ranking-row">
+      <div style="font-size:1.5rem;">🔍</div>
+      <div class="ranking-info">
+        <div class="name">7:00 AM — Consulta VectorPOS</div>
+        <div class="sub">Resumen del día anterior + estado meta</div>
+      </div>
+    </div>
+    <div class="ranking-row">
+      <div style="font-size:1.5rem;">🔍</div>
+      <div class="ranking-info">
+        <div class="name">7:00 PM — Segunda consulta</div>
+        <div class="sub">Ventas del día + ranking cajeros</div>
+      </div>
+    </div>
+    <div class="ranking-row">
+      <div style="font-size:1.5rem;">📊</div>
+      <div class="ranking-info">
+        <div class="name">8:00 PM — Reporte completo diario</div>
+        <div class="sub">Ventas bot + VectorPOS + ranking completo</div>
+      </div>
+    </div>
+    <div class="ranking-row">
+      <div style="font-size:1.5rem;">📈</div>
+      <div class="ranking-info">
+        <div class="name">Lunes 8:00 AM — Resumen semanal</div>
+        <div class="sub">7 días, promedio, proyección mensual</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ COMANDOS ═══════════════ -->
+<div class="content" id="tab-comandos">
+  <div class="report-card">
+    <h3>⌨️ Comandos del Administrador (3005643045)</h3>
+    <p style="color:#555; margin-bottom:16px;">Envía estos mensajes al número del bot desde tu WhatsApp:</p>
+    <div class="cmd-grid">
+      <div class="cmd-card">
+        <div class="cmd">/ranking</div>
+        <div class="desc">Ranking de vendedores hoy</div>
+      </div>
+      <div class="cmd-card">
+        <div class="cmd">/rankingsemana</div>
+        <div class="desc">Ranking de la semana</div>
+      </div>
+      <div class="cmd-card">
+        <div class="cmd">/rankingmes</div>
+        <div class="desc">Ranking del mes</div>
+      </div>
+      <div class="cmd-card">
+        <div class="cmd">/meta</div>
+        <div class="desc">Ver progreso meta $10M</div>
+      </div>
+      <div class="cmd-card">
+        <div class="cmd">/pos</div>
+        <div class="desc">Consultar VectorPOS ahora</div>
+      </div>
+      <div class="cmd-card">
+        <div class="cmd">/productos</div>
+        <div class="desc">Top productos del mes</div>
+      </div>
+      <div class="cmd-card">
+        <div class="cmd">/ventas</div>
+        <div class="desc">Ventas del día</div>
+      </div>
+      <div class="cmd-card">
+        <div class="cmd">/reportediario</div>
+        <div class="desc">Enviar reporte ahora</div>
+      </div>
+      <div class="cmd-card">
+        <div class="cmd">/addproducto</div>
+        <div class="desc">Agregar perfume al catálogo<br><small>Ej: /addproducto Chanel No5|85000|10</small></div>
+      </div>
+      <div class="cmd-card">
+        <div class="cmd">/venta</div>
+        <div class="desc">Registrar venta manual<br><small>Ej: /venta Chanel|85000|1|Maria</small></div>
+      </div>
+      <div class="cmd-card">
+        <div class="cmd">/reset</div>
+        <div class="desc">Reiniciar conversación</div>
+      </div>
+      <div class="cmd-card">
+        <div class="cmd">/ayuda</div>
+        <div class="desc">Ver todos los comandos</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showTab(id) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// Animación barra de progreso
+setTimeout(() => {
+  const bar = document.querySelector('.progress-bar');
+  if (bar) bar.style.width = bar.style.width;
+}, 300);
+</script>
+</body>
+</html>

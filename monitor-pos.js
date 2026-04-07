@@ -1,0 +1,304 @@
+/**
+ * monitor-pos.js - Monitor de VectorPOS con Puppeteer
+ *
+ * Extrae ventas diarias, acumulado del mes y ranking por cajero.
+ * Usa Puppeteer (navegador real) porque el login de VectorPOS
+ * requiere JavaScript del cliente.
+ */
+
+const puppeteer = require('puppeteer');
+const db = require('./database');
+
+const BASE = 'https://pos.vectorpos.com.co';
+const ID_SYA = process.env.VECTORPOS_ID || 'A21431100100001';
+const META_MENSUAL = parseInt(process.env.META_MENSUAL) || 10000000;
+
+// ──────────────────────────────────────────────
+// FORMATO DE FECHAS
+// ──────────────────────────────────────────────
+
+function fechaHoy() {
+  return new Date().toISOString().split('T')[0];
+}
+
+function fechaInicioMes() {
+  const hoy = new Date();
+  return `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
+/** Convierte "1.553.000" (formato colombiano) → 1553000 */
+function parsearMonto(str) {
+  if (!str || str.trim() === '' || str.trim() === '-') return 0;
+  const limpio = str.replace(/\./g, '').replace(',', '.').replace(/[^0-9.]/g, '');
+  const num = parseFloat(limpio);
+  return isNaN(num) ? 0 : num;
+}
+
+// ──────────────────────────────────────────────
+// LOGIN CON PUPPETEER
+// ──────────────────────────────────────────────
+
+async function crearBrowserLogueado() {
+  const user = process.env.VECTORPOS_USER;
+  const pass = process.env.VECTORPOS_PASS;
+
+  if (!user || !pass) {
+    throw new Error('Faltan VECTORPOS_USER y VECTORPOS_PASS en el .env');
+  }
+
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+
+    await page.goto(BASE + '/index.php?r=site/login', {
+      waitUntil: 'networkidle0',
+      timeout: 25000,
+    });
+
+    await page.type('#txtUser', user, { delay: 40 });
+    await page.type('#txtPw', pass, { delay: 40 });
+
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+      page.click('input[type="submit"]'),
+    ]);
+
+    if (page.url().includes('login')) {
+      await browser.close();
+      throw new Error('Credenciales inválidas de VectorPOS');
+    }
+
+    return { browser, page };
+  } catch (e) {
+    await browser.close();
+    throw e;
+  }
+}
+
+// ──────────────────────────────────────────────
+// EXTRAER VENTAS GENERALES (por día)
+// ──────────────────────────────────────────────
+
+async function extraerVentasGenerales(page, fechaInicial, fechaFinal) {
+  const url = `${BASE}/index.php?r=ventas%2Fgeneral&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}&tipo=dia`;
+  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+
+  const filas = await page.evaluate(() => {
+    const rows = [];
+    const tabla = document.querySelector('table');
+    if (!tabla) return rows;
+    tabla.querySelectorAll('tr').forEach(row => {
+      const cells = [...row.querySelectorAll('td,th')].map(c => c.innerText.trim().replace(/\s+/g, ' '));
+      rows.push(cells);
+    });
+    return rows;
+  });
+
+  const datos = [];
+  let cabeceras = [];
+
+  for (const fila of filas) {
+    if (fila[0] === 'Dia' || fila[0] === 'Día') {
+      cabeceras = fila;
+      continue;
+    }
+    if (!fila[0] || !fila[0].match(/^\d{4}-\d{2}-\d{2}$/)) continue;
+
+    datos.push({
+      fecha: fila[0],
+      totalVentas: parsearMonto(fila[1]),
+      tickets: parseInt(fila[7]) || 0,
+      efectivo: parsearMonto(fila[9]),
+      bancolombia: parsearMonto(fila[11]),
+      nequi: parsearMonto(fila[12]),
+    });
+  }
+
+  return datos;
+}
+
+// ──────────────────────────────────────────────
+// EXTRAER VENTAS POR CAJERO
+// ──────────────────────────────────────────────
+
+async function extraerVentasCajero(page, fechaInicial, fechaFinal) {
+  const url = `${BASE}/index.php?r=ventas%2Fcajero&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
+  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+
+  const filas = await page.evaluate(() => {
+    const rows = [];
+    const tabla = document.querySelector('table');
+    if (!tabla) return rows;
+    tabla.querySelectorAll('tr').forEach(row => {
+      const cells = [...row.querySelectorAll('td,th')].map(c => c.innerText.trim().replace(/\s+/g, ' '));
+      rows.push(cells);
+    });
+    return rows;
+  });
+
+  const cajeros = [];
+
+  for (const fila of filas) {
+    // Saltear cabecera (fila[0] = 'Cajero') y filas vacías
+    if (!fila[0] || fila[0] === 'Cajero' || fila[0] === 'Total') continue;
+
+    cajeros.push({
+      cajero: fila[0],
+      concepto: fila[1] || '',
+      tickets: parseInt(fila[2]) || 0,
+      efectivo: parsearMonto(fila[3]),
+      bancolombia: parsearMonto(fila[4]),
+      nequi: parsearMonto(fila[5]),
+      total: parsearMonto(fila[6]),
+    });
+  }
+
+  // Agrupar por cajero (puede haber múltiples filas por cajero)
+  const porCajero = {};
+  for (const c of cajeros) {
+    if (!porCajero[c.cajero]) {
+      porCajero[c.cajero] = { cajero: c.cajero, tickets: 0, efectivo: 0, bancolombia: 0, nequi: 0, total: 0 };
+    }
+    porCajero[c.cajero].tickets += c.tickets;
+    porCajero[c.cajero].efectivo += c.efectivo;
+    porCajero[c.cajero].bancolombia += c.bancolombia;
+    porCajero[c.cajero].nequi += c.nequi;
+    porCajero[c.cajero].total += c.total;
+  }
+
+  return Object.values(porCajero).sort((a, b) => b.total - a.total);
+}
+
+// ──────────────────────────────────────────────
+// MONITOREO PRINCIPAL
+// ──────────────────────────────────────────────
+
+async function monitorearVentasDiarias() {
+  console.log('\n🔍 Iniciando monitoreo VectorPOS...');
+  const hoy = fechaHoy();
+  const inicioMes = fechaInicioMes();
+
+  let browser = null;
+  try {
+    const { browser: b, page } = await crearBrowserLogueado();
+    browser = b;
+
+    // Datos de hoy
+    const ventasHoy = await extraerVentasGenerales(page, hoy, hoy);
+    const totalHoy = ventasHoy.reduce((s, v) => s + v.totalVentas, 0);
+    const ticketsHoy = ventasHoy.reduce((s, v) => s + v.tickets, 0);
+    console.log(`✅ Hoy: $${totalHoy.toLocaleString('es-CO')} | ${ticketsHoy} tickets`);
+
+    // Guardar en Supabase
+    if (totalHoy > 0) {
+      await db.guardarDatosPOS({
+        fecha: hoy,
+        total_dia: totalHoy,
+        num_transacciones: ticketsHoy,
+        raw_data: { ventasHoy },
+      });
+    }
+
+    // Acumulado del mes
+    const ventasMes = await extraerVentasGenerales(page, inicioMes, hoy);
+    const totalMes = ventasMes.reduce((s, v) => s + v.totalVentas, 0);
+    console.log(`📅 Mes acumulado: $${totalMes.toLocaleString('es-CO')}`);
+
+    // Cajeros del mes
+    const cajerosMes = await extraerVentasCajero(page, inicioMes, hoy);
+    console.log(`👥 Cajeros: ${cajerosMes.length} encontrados`);
+
+    await browser.close();
+    browser = null;
+
+    return {
+      hoy: { fecha: hoy, total: totalHoy, tickets: ticketsHoy },
+      totalMes,
+      cajerosMes,
+      meta: META_MENSUAL,
+      porcentajeMeta: Math.min(100, ((totalMes / META_MENSUAL) * 100)).toFixed(1),
+      faltan: Math.max(0, META_MENSUAL - totalMes),
+      diasTranscurridos: new Date().getDate(),
+      diasRestantes: calcularDiasRestantes(),
+      promedioNecesario: calcularPromedioNecesario(totalMes),
+      promedioAlcanzado: totalMes / new Date().getDate(),
+    };
+
+  } catch (e) {
+    console.error('❌ Error en monitoreo VectorPOS:', e.message);
+    if (browser) await browser.close();
+    return null;
+  }
+}
+
+// ──────────────────────────────────────────────
+// GENERAR MENSAJE WHATSAPP
+// ──────────────────────────────────────────────
+
+function generarMensajeMeta(datos) {
+  if (!datos) {
+    return '⚠️ No se pudo conectar a VectorPOS. Verifica las credenciales en el .env';
+  }
+
+  const { hoy, totalMes, cajerosMes, meta, porcentajeMeta, faltan, diasTranscurridos, diasRestantes, promedioNecesario, promedioAlcanzado } = datos;
+
+  // Barra de progreso
+  const pct = Math.round(parseFloat(porcentajeMeta));
+  const barraLlena = Math.round(pct / 10);
+  const barra = '🟢'.repeat(barraLlena) + '⚪'.repeat(10 - barraLlena);
+
+  let emoji = pct >= 80 ? '🟢' : pct >= 50 ? '🟡' : pct >= 25 ? '🟠' : '🔴';
+
+  // Ranking cajeros
+  const medallas = ['🥇', '🥈', '🥉'];
+  const rankingCajeros = cajerosMes.map((c, i) => {
+    const m = medallas[i] || `${i + 1}.`;
+    const pctMes = totalMes > 0 ? ((c.total / totalMes) * 100).toFixed(0) : 0;
+    return `${m} *${c.cajero}*\n   💰 $${c.total.toLocaleString('es-CO')} (${pctMes}%) | 🎫 ${c.tickets} tickets`;
+  }).join('\n\n');
+
+  return `${emoji} *VENTAS VECTORPOS - ${hoy.fecha}*
+
+💵 *Hoy:* $${hoy.total.toLocaleString('es-CO')} (${hoy.tickets} tickets)
+
+📊 *Mes (${diasTranscurridos} días):*
+${barra} ${porcentajeMeta}%
+💰 $${totalMes.toLocaleString('es-CO')} / $${meta.toLocaleString('es-CO')}
+📉 Promedio/día: $${Math.round(promedioAlcanzado).toLocaleString('es-CO')}
+🎯 Meta/día necesaria: $${Math.round(promedioNecesario).toLocaleString('es-CO')}
+⏳ Faltan: $${faltan.toLocaleString('es-CO')} en ${diasRestantes} días
+
+👥 *RANKING CAJEROS DEL MES:*
+${rankingCajeros || '(sin datos)'}
+
+─────────────────
+🤖 _VectorPOS Bot_`;
+}
+
+// ──────────────────────────────────────────────
+// UTILIDADES
+// ──────────────────────────────────────────────
+
+function calcularDiasRestantes() {
+  const hoy = new Date();
+  const ultimoDia = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
+  return Math.max(1, ultimoDia - hoy.getDate());
+}
+
+function calcularPromedioNecesario(totalActual) {
+  const restantes = calcularDiasRestantes();
+  return Math.max(0, (META_MENSUAL - totalActual) / restantes);
+}
+
+module.exports = {
+  monitorearVentasDiarias,
+  generarMensajeMeta,
+  META_MENSUAL,
+  fechaHoy,
+  fechaInicioMes,
+};
