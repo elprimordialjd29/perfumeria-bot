@@ -20,14 +20,16 @@ Detecta la intención del mensaje y pon la etiqueta AL INICIO de tu respuesta:
 
 [REPORTE_HOY]       → ventas de hoy, reporte de hoy, cómo vamos hoy, resumen hoy
 [REPORTE_MES]       → ventas de este mes, cómo va el mes, meta mensual, avance
-[REPORTE_MES_ANT]   → mes pasado, ventas de marzo, ventas del mes anterior
+[REPORTE_MES_ANT]   → mes pasado, ventas del mes anterior
 [REPORTE_SEMANA]    → esta semana, ventas de la semana
 [REPORTE_RANGO]     → ventas del [fecha] al [fecha], rango personalizado
 [INVENTARIO]        → inventario, stock, saldos, qué falta, productos bajos, existencias
-[RANKING_HOY]       → quién vendió hoy, ranking hoy
+[MEDIOS_PAGO_HOY]   → medios de pago hoy, cuánto en efectivo hoy, cuánto en transferencia hoy, cómo pagaron hoy
+[MEDIOS_PAGO_MES]   → medios de pago del mes, efectivo del mes, transferencias del mes
+[QUIEN_TRABAJO]     → quién trabajó hoy, quién vino hoy, cajeros de hoy, quién estuvo hoy
+[RANKING_HOY]       → quién vendió más hoy, ranking hoy
 [RANKING_SEM]       → ranking semana, esta semana por cajero
 [RANKING_MES]       → ranking mes, mejores cajeros, quién vende más
-[CAJEROS]           → cajeros, vendedores, equipo, personal
 [AYUDA]             → ayuda, qué puedes hacer, comandos, opciones
 
 Si el usuario menciona fechas específicas, extráelas en formato YYYY-MM-DD en la etiqueta así:
@@ -56,10 +58,12 @@ const MENU_ACCIONES = {
   '2': '[REPORTE_MES]',
   '3': '[REPORTE_MES_ANT]',
   '4': '[REPORTE_SEMANA]',
-  '5': '[RANKING_HOY]',
-  '6': '[RANKING_MES]',
-  '7': '[INVENTARIO]',
-  '8': '[REPORTE_RANGO]',
+  '5': '[MEDIOS_PAGO_HOY]',
+  '6': '[QUIEN_TRABAJO]',
+  '7': '[RANKING_HOY]',
+  '8': '[RANKING_MES]',
+  '9': '[INVENTARIO]',
+  '0': '[REPORTE_RANGO]',
 };
 
 async function procesarMensaje(texto) {
@@ -144,6 +148,18 @@ async function ejecutarAccion(raw) {
 
     if (raw.startsWith('[RANKING_MES]') || raw.startsWith('[CAJEROS]')) {
       return await reporteRankingPOS(monitor.fechaInicioMes(), monitor.fechaHoy(), 'ESTE MES');
+    }
+
+    if (raw.startsWith('[MEDIOS_PAGO_HOY]')) {
+      return await reporteMediosPago(monitor.fechaHoy(), monitor.fechaHoy(), 'HOY');
+    }
+
+    if (raw.startsWith('[MEDIOS_PAGO_MES]')) {
+      return await reporteMediosPago(monitor.fechaInicioMes(), monitor.fechaHoy(), 'ESTE MES');
+    }
+
+    if (raw.startsWith('[QUIEN_TRABAJO]')) {
+      return await reporteQuienTrabajo();
     }
 
     if (raw.startsWith('[AYUDA]') || raw.startsWith('[MENU]')) {
@@ -239,19 +255,90 @@ async function reporteRankingPOS(desde, hasta, titulo) {
 // AYUDA
 // ──────────────────────────────────────────────
 
+// ──────────────────────────────────────────────
+// MEDIOS DE PAGO
+// ──────────────────────────────────────────────
+
+async function reporteMediosPago(desde, hasta, titulo) {
+  try {
+    const { browser, page } = await monitor.crearSesionPOS();
+    const cajeros = await monitor.extraerVentasCajero(page, desde, hasta);
+    await browser.close();
+
+    if (!cajeros.length) return `💳 Sin ventas registradas para ${titulo}.`;
+
+    const totales = cajeros.reduce((acc, c) => {
+      acc.efectivo    += c.efectivo    || 0;
+      acc.bancolombia += c.bancolombia || 0;
+      acc.nequi       += c.nequi       || 0;
+      acc.total       += c.total       || 0;
+      return acc;
+    }, { efectivo: 0, bancolombia: 0, nequi: 0, total: 0 });
+
+    const transferencias = totales.bancolombia + totales.nequi;
+    const pctEfectivo = totales.total > 0 ? ((totales.efectivo / totales.total) * 100).toFixed(0) : 0;
+    const pctTransf   = totales.total > 0 ? ((transferencias   / totales.total) * 100).toFixed(0) : 0;
+
+    let msg = `💳 *MEDIOS DE PAGO — ${titulo}*\n\n`;
+    msg += `💰 *Total vendido:* $${totales.total.toLocaleString('es-CO')}\n\n`;
+    msg += `💵 *Efectivo:* $${totales.efectivo.toLocaleString('es-CO')} (${pctEfectivo}%)\n`;
+    msg += `🏦 *Transferencias:* $${transferencias.toLocaleString('es-CO')} (${pctTransf}%)\n`;
+    if (totales.bancolombia > 0) msg += `   • Bancolombia: $${totales.bancolombia.toLocaleString('es-CO')}\n`;
+    if (totales.nequi > 0)       msg += `   • Nequi: $${totales.nequi.toLocaleString('es-CO')}\n`;
+    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch(e) {
+    return '❌ No pude consultar los medios de pago.';
+  }
+}
+
+// ──────────────────────────────────────────────
+// QUIÉN TRABAJÓ HOY
+// ──────────────────────────────────────────────
+
+async function reporteQuienTrabajo() {
+  try {
+    const hoy = monitor.fechaHoy();
+    const { browser, page } = await monitor.crearSesionPOS();
+    const cajeros = await monitor.extraerVentasCajero(page, hoy, hoy);
+    await browser.close();
+
+    const activos = cajeros.filter(c => c.tickets > 0);
+
+    if (!activos.length) {
+      return `👥 *¿QUIÉN TRABAJÓ HOY? — ${hoy}*\n\nNo hay cajeros con ventas registradas hoy.`;
+    }
+
+    const medallas = ['🥇', '🥈', '🥉'];
+    let msg = `👥 *¿QUIÉN TRABAJÓ HOY? — ${hoy}*\n\n`;
+    msg += `_${activos.length} cajero${activos.length > 1 ? 's' : ''} activo${activos.length > 1 ? 's' : ''} hoy_\n\n`;
+
+    activos.forEach((c, i) => {
+      msg += `${medallas[i] || `${i + 1}.`} *${c.cajero}*\n`;
+      msg += `   🎫 ${c.tickets} tickets | 💰 $${c.total.toLocaleString('es-CO')}\n`;
+      msg += `   💵 Efectivo: $${(c.efectivo||0).toLocaleString('es-CO')} | 🏦 Transfer: $${((c.bancolombia||0)+(c.nequi||0)).toLocaleString('es-CO')}\n\n`;
+    });
+
+    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch(e) {
+    return '❌ No pude consultar quién trabajó hoy.';
+  }
+}
+
 function mensajeMenu() {
   return `👋 *Hola jefe, ¿en qué te puedo ayudar?*
 
-Elige una opción:
-
-1️⃣ Reporte de hoy
-2️⃣ Reporte de este mes
-3️⃣ Reporte del mes pasado
-4️⃣ Reporte de esta semana
-5️⃣ Ranking cajeros hoy
-6️⃣ Ranking cajeros del mes
-7️⃣ Alertas de inventario
-8️⃣ Ventas por rango de fechas
+1️⃣ Ventas de hoy
+2️⃣ Ventas de este mes
+3️⃣ Ventas del mes pasado
+4️⃣ Ventas de esta semana
+5️⃣ Medios de pago hoy (efectivo / transferencia)
+6️⃣ Quién trabajó hoy
+7️⃣ Ranking cajeros hoy
+8️⃣ Ranking cajeros del mes
+9️⃣ Alertas de inventario
+0️⃣ Ventas por rango de fechas
 
 _Escribe el número o dime lo que necesitas_ 😊`;
 }

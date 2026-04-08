@@ -64,14 +64,16 @@ async function iniciar() {
     await bot.sendMessage(ADMIN_ID,
       '👋 *Hola jefe, ¿en qué te puedo ayudar?*\n\n' +
       'Elige una opción:\n\n' +
-      '1️⃣ Reporte de hoy\n' +
-      '2️⃣ Reporte de este mes\n' +
-      '3️⃣ Reporte del mes pasado\n' +
-      '4️⃣ Reporte de esta semana\n' +
-      '5️⃣ Ranking cajeros hoy\n' +
-      '6️⃣ Ranking cajeros del mes\n' +
-      '7️⃣ Alertas de inventario\n' +
-      '8️⃣ Ventas por rango de fechas\n\n' +
+      '1️⃣ Ventas de hoy\n' +
+      '2️⃣ Ventas de este mes\n' +
+      '3️⃣ Ventas del mes pasado\n' +
+      '4️⃣ Ventas de esta semana\n' +
+      '5️⃣ Medios de pago hoy\n' +
+      '6️⃣ Quién trabajó hoy\n' +
+      '7️⃣ Ranking cajeros hoy\n' +
+      '8️⃣ Ranking cajeros del mes\n' +
+      '9️⃣ Alertas de inventario\n' +
+      '0️⃣ Ventas por rango de fechas\n\n' +
       '_Escribe el número o dime lo que necesitas_ 😊',
       { parse_mode: 'Markdown' }
     );
