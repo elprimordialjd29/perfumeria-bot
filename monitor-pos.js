@@ -644,15 +644,48 @@ async function consultarAlertasInventario() {
   return { alertasGramos, alertasUnidades, alertas, total: inv.length };
 }
 
-/** Filtra inventario bajo por categoría específica */
+// Palabras clave por categoría para filtrar por nombre cuando no hay categoría asignada
+const KEYWORDS_CATEGORIA = {
+  'ENVASE':         ['envase', 'tapa plana', 'singler', 'beirut', 'bomba', 'cartier', 'frasco', 'botella', 'perfumero', 'maletín', 'maletin'],
+  'INSUMOS VARIOS': ['alcohol', 'gramera', 'insumo', 'tapón', 'tapon', 'sello', 'etiqueta', 'caja', 'bolsa'],
+  'CREMA CORPORAL': ['crema', 'loción', 'locion', 'mantequilla', 'corporal'],
+  'ESENCIAS M':     ['esencia', 'fragancia', 'perfume'],
+  'ESENCIAS F':     ['esencia', 'fragancia', 'perfume'],
+  'ESENCIAS U':     ['esencia', 'fragancia', 'perfume'],
+  'REPLICA 1.1':    ['1.1', 'replica', 'réplica'],
+  'ORIGINALES':     ['original'],
+};
+
+/** Filtra inventario por categoría específica */
 async function consultarInventarioPorCategoria(categoria) {
   const inv = await consultarTodoInventario();
   if (!inv) return null;
   const catN = categoria.toUpperCase().trim();
-  return inv.filter(p => {
-    const c = (p.categoria || '').toUpperCase();
-    return c.includes(catN) || catN.includes(c.split(' ')[0]);
-  }).sort((a, b) => a.saldo - b.saldo);
+
+  // Log para diagnóstico
+  const conCategoria = inv.filter(p => p.categoria).length;
+  console.log(`🔍 Filtrar por "${catN}" | ${inv.length} productos | ${conCategoria} con categoría`);
+
+  const resultado = inv.filter(p => {
+    const cat = (p.categoria || '').toUpperCase().trim();
+
+    // Match directo por categoría si está disponible
+    if (cat) {
+      // "ESENCIAS" debe coincidir con ESENCIAS M, ESENCIAS F, ESENCIAS U
+      if (catN === 'ESENCIAS') return cat.startsWith('ESENCIAS');
+      return cat === catN || cat.startsWith(catN) || catN.startsWith(cat);
+    }
+
+    // Fallback: buscar por palabras clave en el nombre del producto
+    const keywords = KEYWORDS_CATEGORIA[catN] ||
+      Object.entries(KEYWORDS_CATEGORIA).find(([k]) => catN.startsWith(k) || k.startsWith(catN))?.[1];
+    if (!keywords) return false;
+    const nombre = p.nombre.toLowerCase();
+    return keywords.some(kw => nombre.includes(kw));
+  });
+
+  console.log(`✅ ${resultado.length} productos encontrados en "${catN}"`);
+  return resultado.sort((a, b) => a.saldo - b.saldo);
 }
 
 function generarMensajeAlertas(resultado) {
