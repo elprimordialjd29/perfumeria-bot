@@ -27,6 +27,7 @@ Inventar datos confunde al dueño y destruye la confianza. Si no hay etiqueta di
 
 ━━━ ETIQUETAS — USA UNA AL INICIO cuando necesites datos del negocio ━━━
 
+[REPORTE_GENERAL]   → reporte general, resumen completo, dame todo, cómo vamos, estado general, reporte matutino
 [REPORTE_HOY]       → ventas hoy, cómo vamos hoy, resumen hoy
 [REPORTE_MES]       → este mes, meta mensual, avance del mes
 [REPORTE_MES_ANT]   → mes pasado
@@ -138,6 +139,8 @@ const MENU_ACCIONES = {
   'V': '[VER_REQS]',
   'i': '[VENTAS_INVENTARIO]',
   'I': '[VENTAS_INVENTARIO]',
+  'g': '[REPORTE_GENERAL]',
+  'G': '[REPORTE_GENERAL]',
 };
 
 /** Retorna objeto con fechas de referencia relativas */
@@ -279,6 +282,10 @@ async function procesarMensaje(texto, esAdmin = true) {
 }
 
 async function ejecutarAccion(raw) {
+    if (raw.startsWith('[REPORTE_GENERAL]')) {
+      return await reporteGeneral();
+    }
+
     if (raw.startsWith('[REPORTE_HOY]')) {
       // Solo ventas de HOY (no el reporte mensual)
       return await reporteRango(monitor.fechaHoy(), monitor.fechaHoy(), 'HOY');
@@ -456,6 +463,92 @@ async function ejecutarAccion(raw) {
     }
 
     return raw.replace(/\[.*?\]/g, '').trim() || raw;
+}
+
+// ──────────────────────────────────────────────
+// REPORTE GENERAL (mismo del matutino, bajo demanda)
+// ──────────────────────────────────────────────
+
+async function reporteGeneral() {
+  try {
+    const hoy   = new Date();
+    const ayer  = new Date(hoy); ayer.setDate(hoy.getDate() - 1);
+    const fAyer = ayer.toISOString().split('T')[0];
+    const meta  = parseInt(process.env.META_MENSUAL) || 10000000;
+    const labelAyer = ayer.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' });
+    const diasEnMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
+    const diasRestantes = Math.max(1, diasEnMes - hoy.getDate());
+    const metaDiaria = Math.round(meta / diasEnMes);
+    const medallas = ['🥇', '🥈', '🥉'];
+
+    // Ventas de ayer
+    const { browser, page } = await monitor.crearSesionPOS();
+    const cajerosAyer = await monitor.extraerVentasCajero(page, fAyer, fAyer);
+    await browser.close();
+
+    const totalAyer   = cajerosAyer.reduce((s, c) => s + c.total,   0);
+    const ticketsAyer = cajerosAyer.reduce((s, c) => s + c.tickets, 0);
+
+    // Avance del mes
+    const datosMes   = await monitor.monitorearVentasDiarias();
+    const totalMes   = datosMes?.totalMes   || 0;
+    const cajerosMes = datosMes?.cajerosMes || [];
+    const faltaMeta  = Math.max(0, meta - totalMes);
+    const pctMeta    = ((totalMes / meta) * 100).toFixed(1);
+    const promNecesario = Math.round(faltaMeta / diasRestantes);
+    const barra  = Math.min(Math.round(Number(pctMeta) / 10), 10);
+    const progreso = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
+
+    let msg = `📋 *REPORTE GENERAL*\n_${hoy.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}_\n\n`;
+
+    msg += `📅 *VENTAS DE AYER (${labelAyer.toUpperCase()})*\n`;
+    msg += `💰 Total: *$${totalAyer.toLocaleString('es-CO')}* | 🎫 ${ticketsAyer} tickets\n`;
+    if (totalAyer > 0 && ticketsAyer > 0) msg += `💵 Promedio: $${Math.round(totalAyer / ticketsAyer).toLocaleString('es-CO')}\n`;
+    if (cajerosAyer.length > 0) {
+      cajerosAyer.forEach((c, i) => {
+        msg += `   ${medallas[i] || `${i+1}.`} *${c.cajero}*: $${c.total.toLocaleString('es-CO')} (${c.tickets} tkt)\n`;
+      });
+    } else { msg += `_Sin ventas ayer_\n`; }
+
+    msg += `\n📊 *AVANCE DEL MES*\n`;
+    msg += `${progreso} ${pctMeta}%\n`;
+    msg += `💰 Vendido: *$${totalMes.toLocaleString('es-CO')}* / $${meta.toLocaleString('es-CO')}\n`;
+    if (faltaMeta > 0) {
+      msg += `📉 Falta: *$${faltaMeta.toLocaleString('es-CO')}*\n`;
+      msg += `📌 Necesario/día: $${promNecesario.toLocaleString('es-CO')} | Meta/día: $${metaDiaria.toLocaleString('es-CO')}\n`;
+      msg += `📆 Días restantes: ${diasRestantes}\n`;
+    } else { msg += `🏆 *¡META CUMPLIDA!*\n`; }
+
+    if (cajerosMes.length > 0) {
+      const totalGen = cajerosMes.reduce((s, c) => s + c.total, 0);
+      msg += `\n👥 *Ranking del mes:*\n`;
+      cajerosMes.forEach((c, i) => {
+        const pct = totalGen > 0 ? ((c.total / totalGen) * 100).toFixed(0) : 0;
+        msg += `   ${medallas[i] || `${i+1}.`} *${c.cajero}*: $${c.total.toLocaleString('es-CO')} (${pct}%)\n`;
+      });
+    }
+
+    // Inventario bajo
+    try {
+      const alertas = await monitor.consultarAlertasInventario();
+      const bajos = [...(alertas?.alertasGramos || []), ...(alertas?.alertasUnidades || [])].sort((a, b) => a.saldo - b.saldo);
+      if (bajos.length > 0) {
+        msg += `\n⚠️ *INVENTARIO BAJO (${bajos.length} productos)*\n`;
+        // En reporte general mostrar los primeros en el mismo mensaje
+        bajos.slice(0, 15).forEach(p => {
+          const nivel = p.saldo <= 0 ? '🚨' : p.saldo <= 5 ? '🔴' : '🟡';
+          msg += `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'uds'}\n`;
+        });
+        if (bajos.length > 15) msg += `_...y ${bajos.length - 15} más (escribe *I* para ver todos)_\n`;
+      } else { msg += `\n✅ *Inventario: sin alertas*\n`; }
+    } catch(e) { msg += `\n⚠️ _No pude verificar inventario_\n`; }
+
+    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch(e) {
+    console.error('Error reporte general:', e.message);
+    return '❌ No pude generar el reporte general. Intenta de nuevo.';
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -1293,6 +1386,7 @@ function mensajeBienvenida() {
 
 function mensajeMenu() {
   return `📋 *MENÚ DE OPCIONES*\n\n` +
+    `⭐ *G* — Reporte general (ayer + mes + inventario bajo)\n` +
     `1️⃣ Ventas de hoy\n` +
     `2️⃣ Ventas de este mes\n` +
     `3️⃣ Ventas del mes pasado\n` +
