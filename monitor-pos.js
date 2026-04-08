@@ -38,6 +38,10 @@ function parsearMonto(str) {
 // LOGIN CON PUPPETEER
 // ──────────────────────────────────────────────
 
+async function crearSesionPOS() {
+  return await crearBrowserLogueado();
+}
+
 async function crearBrowserLogueado() {
   const user = process.env.VECTORPOS_USER;
   const pass = process.env.VECTORPOS_PASS;
@@ -295,9 +299,155 @@ function calcularPromedioNecesario(totalActual) {
   return Math.max(0, (META_MENSUAL - totalActual) / restantes);
 }
 
+// ──────────────────────────────────────────────
+// ALERTAS DE INVENTARIO
+// ──────────────────────────────────────────────
+
+const APP_BASE = 'https://app.vectorpos.com.co';
+const LIMITE_GRAMOS = 50;
+const LIMITE_UNIDADES = 20;
+
+async function consultarAlertasInventario() {
+  console.log('\n📦 Consultando inventario VectorPOS...');
+  const user = process.env.VECTORPOS_USER;
+  const pass = process.env.VECTORPOS_PASS;
+
+  let browser = null;
+  try {
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+    });
+
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+
+    // Capturar respuesta de la API de saldos
+    let saldosData = null;
+    page.on('response', async res => {
+      if (res.url().includes('kardex/saldos')) {
+        try { saldosData = JSON.parse(await res.text()); } catch(e) {}
+      }
+    });
+
+    // Login
+    await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'networkidle0', timeout: 30000 });
+    await page.type('#txtEmail', user, { delay: 30 });
+    await page.type('#txtClave', pass, { delay: 30 });
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+      page.click('#btnEntrar'),
+    ]);
+
+    // Seleccionar sucursal si aparece
+    if (page.url().includes('cambioSucursal')) {
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+        page.click('a,button'),
+      ]);
+    }
+
+    // Navegar a Consultar Saldos
+    await page.evaluate(() => {
+      const link = [...document.querySelectorAll('a')].find(a => a.innerText.trim() === 'Consultar Saldos');
+      if (link) link.click();
+    });
+    await new Promise(r => setTimeout(r, 2000));
+
+    // Cargar lista
+    await page.evaluate(() => {
+      const btn = document.querySelector('#btnCargar');
+      if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await new Promise(r => setTimeout(r, 5000));
+
+    await browser.close();
+    browser = null;
+
+    if (!saldosData?.datos?.length) {
+      return { alertasGramos: [], alertasUnidades: [], total: 0 };
+    }
+
+    const productos = saldosData.datos;
+    console.log(`✅ ${productos.length} productos cargados`);
+
+    // Alerta 1: Gramos < 50
+    const alertasGramos = productos
+      .filter(p => {
+        const medida = (p.Medida || '').toLowerCase();
+        const saldo = parseFloat(p['Saldo Actual']) || 0;
+        return medida === 'gramos' && saldo < LIMITE_GRAMOS;
+      })
+      .map(p => ({ nombre: p.Nombre, saldo: parseFloat(p['Saldo Actual']), medida: p.Medida }))
+      .sort((a, b) => a.saldo - b.saldo);
+
+    // Alerta 2: Unidades < 20 (excluyendo "original")
+    const alertasUnidades = productos
+      .filter(p => {
+        const medida = (p.Medida || '').toLowerCase();
+        const nombre = (p.Nombre || '').toLowerCase();
+        const saldo = parseFloat(p['Saldo Actual']) || 0;
+        return medida === 'unidad' && !nombre.includes('original') && saldo < LIMITE_UNIDADES;
+      })
+      .map(p => ({ nombre: p.Nombre, saldo: parseFloat(p['Saldo Actual']), medida: p.Medida }))
+      .sort((a, b) => a.saldo - b.saldo);
+
+    console.log(`⚠️  Alertas gramos: ${alertasGramos.length} | Alertas unidades: ${alertasUnidades.length}`);
+
+    return {
+      alertasGramos,
+      alertasUnidades,
+      total: productos.length,
+    };
+
+  } catch (e) {
+    console.error('❌ Error consultando inventario:', e.message);
+    if (browser) await browser.close();
+    return null;
+  }
+}
+
+function generarMensajeAlertas(resultado) {
+  if (!resultado) {
+    return '❌ No pude conectar al inventario de VectorPOS.';
+  }
+
+  const { alertasGramos, alertasUnidades, total } = resultado;
+
+  if (alertasGramos.length === 0 && alertasUnidades.length === 0) {
+    return `✅ *INVENTARIO OK*\n\nTodos los productos están sobre los límites mínimos.\n_(${total} productos revisados)_`;
+  }
+
+  let msg = `⚠️ *ALERTAS DE INVENTARIO*\n_(${total} productos revisados)_\n`;
+
+  if (alertasGramos.length > 0) {
+    msg += `\n🔴 *GRAMOS BAJOS (< ${LIMITE_GRAMOS}g)*\n`;
+    alertasGramos.forEach(p => {
+      const nivel = p.saldo <= 0 ? '🚨 AGOTADO' : p.saldo <= 10 ? '🔴 CRÍTICO' : '🟠 BAJO';
+      msg += `${nivel} ${p.nombre}: *${p.saldo}g*\n`;
+    });
+  }
+
+  if (alertasUnidades.length > 0) {
+    msg += `\n🟡 *UNIDADES BAJAS (< ${LIMITE_UNIDADES}u)*\n`;
+    alertasUnidades.forEach(p => {
+      const nivel = p.saldo <= 0 ? '🚨 AGOTADO' : p.saldo <= 5 ? '🔴 CRÍTICO' : '🟠 BAJO';
+      msg += `${nivel} ${p.nombre}: *${p.saldo} u*\n`;
+    });
+  }
+
+  msg += `\n─────────────────\n🤖 _Alerta automática VectorPOS_`;
+  return msg;
+}
+
 module.exports = {
   monitorearVentasDiarias,
   generarMensajeMeta,
+  consultarAlertasInventario,
+  generarMensajeAlertas,
+  crearSesionPOS,
+  extraerVentasGenerales,
+  extraerVentasCajero,
   META_MENSUAL,
   fechaHoy,
   fechaInicioMes,

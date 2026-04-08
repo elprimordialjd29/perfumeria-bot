@@ -1,231 +1,259 @@
 /**
- * agente.js - Vendedor virtual con Groq AI (GRATIS)
- * Modelo: llama-3.3-70b-versatile
- * Gratis: hasta 14,400 requests/día en groq.com
+ * agente.js — Chu, asistente personal de ventas
+ * Entiende lenguaje natural y ejecuta acciones reales en VectorPOS
  */
 
+require('dotenv').config();
 const Groq = require('groq-sdk');
+const monitor = require('./monitor-pos');
 const db = require('./database');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ──────────────────────────────────────────────
-// SISTEMA PROMPT DEL VENDEDOR
-// ──────────────────────────────────────────────
+const historial = [];
 
-function buildSystemPrompt() {
-  const config = db.obtenerConfig();
-  const productos = db.obtenerProductos();
+const SYSTEM_PROMPT = `Eres Chu, asistente personal de ventas de una perfumería colombiana.
+Eres directo, amable y eficiente. Solo respondes en español.
+Ayudas al dueño con reportes de ventas, inventario, cajeros y metas de VectorPOS.
 
-  const catalogoTexto = productos.length > 0
-    ? productos.map(p => `- ${p.nombre}: $${p.precio.toLocaleString('es-CO')} (stock: ${p.stock})`).join('\n')
-    : '(catálogo vacío, el admin debe agregar productos con /addproducto)';
+Detecta la intención del mensaje y pon la etiqueta AL INICIO de tu respuesta:
 
-  return `Eres un vendedor virtual experto de ${config.negocio || 'una perfumería de alta calidad'}.
-Tu nombre es "Nico" y hablas en español, de manera amigable, profesional y persuasiva.
+[REPORTE_HOY]       → ventas de hoy, reporte de hoy, cómo vamos hoy, resumen hoy
+[REPORTE_MES]       → ventas de este mes, cómo va el mes, meta mensual, avance
+[REPORTE_MES_ANT]   → mes pasado, ventas de marzo, ventas del mes anterior
+[REPORTE_SEMANA]    → esta semana, ventas de la semana
+[REPORTE_RANGO]     → ventas del [fecha] al [fecha], rango personalizado
+[INVENTARIO]        → inventario, stock, saldos, qué falta, productos bajos, existencias
+[RANKING_HOY]       → quién vendió hoy, ranking hoy
+[RANKING_SEM]       → ranking semana, esta semana por cajero
+[RANKING_MES]       → ranking mes, mejores cajeros, quién vende más
+[CAJEROS]           → cajeros, vendedores, equipo, personal
+[AYUDA]             → ayuda, qué puedes hacer, comandos, opciones
 
-🌺 CATÁLOGO ACTUAL:
-${catalogoTexto}
+Si el usuario menciona fechas específicas, extráelas en formato YYYY-MM-DD en la etiqueta así:
+[REPORTE_RANGO:2026-03-01:2026-03-31]
 
-📋 TUS RESPONSABILIDADES:
-1. Atender consultas sobre productos, precios y disponibilidad
-2. Recomendar perfumes según el gusto del cliente (florales, orientales, cítricos, amaderados)
-3. Informar sobre promociones y combos
-4. Cuando un cliente quiera COMPRAR, confirmar la venta con el formato especial
-5. Ser empático, entusiasta y crear deseo de compra
+Si el usuario saluda (hola, buenos días, buenas, hey, etc.) responde SIEMPRE con el menú de opciones usando la etiqueta [MENU].
 
-🛒 CUANDO SE CONFIRME UNA VENTA:
-Cuando el cliente confirme que quiere comprar, incluye este bloque EXACTO al final:
-[VENTA: producto="NOMBRE_PRODUCTO" precio=PRECIO cantidad=CANTIDAD vendedor="bot"]
+Si no detectas ninguna intención especial, responde como asistente normal.
 
-Ejemplo real:
-[VENTA: producto="Chanel No 5" precio=85000 cantidad=1 vendedor="bot"]
-
-💡 TÉCNICAS DE VENTA:
-- Pregunta siempre qué tipo de fragancia prefieren
-- Menciona notas aromáticas (vainilla, jazmín, madera de cedro, etc.)
-- Sugiere combos (perfume + crema corporal)
-- Crea urgencia cuando haya pocas unidades ("solo quedan 2")
-- Personaliza: "¿Es para ti o de regalo?"
-
-⚠️ REGLAS:
-- Nunca inventes productos o precios que no estén en el catálogo
-- Si no tienes el producto, ofrece alternativas similares
-- Siempre responde en español
-- Si te preguntan algo ajeno a perfumería, redirecciona amablemente`;
-}
+Ejemplos:
+"dame el reporte de hoy" → "[REPORTE_HOY] Consultando VectorPOS..."
+"cómo vamos este mes" → "[REPORTE_MES] Revisando el avance del mes..."
+"ventas del mes pasado" → "[REPORTE_MES_ANT] Consultando mes anterior..."
+"qué falta en inventario" → "[INVENTARIO] Revisando el stock..."
+"quién ha vendido más este mes" → "[RANKING_MES] Aquí el ranking del mes..."
+"hola" → "[MENU]"
+"buenos días" → "[MENU]"`;
 
 // ──────────────────────────────────────────────
-// PROCESAR MENSAJE CON GROQ (GRATIS)
+// FUNCIÓN PRINCIPAL
 // ──────────────────────────────────────────────
 
-async function procesarMensaje(chatId, mensajeUsuario, vendedor = 'bot') {
-  try {
-    db.guardarMensaje(chatId, 'user', mensajeUsuario);
-    const historial = db.obtenerHistorial(chatId);
-
-    const completion = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',   // Modelo gratis y muy capaz
-      messages: [
-        { role: 'system', content: buildSystemPrompt() },
-        ...historial,
-      ],
-      max_tokens: 800,
-      temperature: 0.7,
-    });
-
-    const respuesta = completion.choices[0]?.message?.content || '¿Puedes repetir tu pregunta?';
-
-    db.guardarMensaje(chatId, 'assistant', respuesta);
-
-    const ventaDetectada = extraerVenta(respuesta, vendedor, chatId);
-
-    return {
-      texto: limpiarRespuesta(respuesta),
-      venta: ventaDetectada,
-    };
-  } catch (error) {
-    console.error('Error en Groq:', error.message);
-    return {
-      texto: '😅 Disculpa, tuve un pequeño problema. ¿Puedes repetir tu mensaje?',
-      venta: null,
-    };
-  }
-}
-
-// ──────────────────────────────────────────────
-// EXTRAER VENTA DEL MENSAJE
-// ──────────────────────────────────────────────
-
-function extraerVenta(texto, vendedor, chatId) {
-  const regex = /\[VENTA:\s*producto="([^"]+)"\s+precio=([\d.]+)\s+cantidad=(\d+)\s+vendedor="([^"]+)"\]/i;
-  const match = texto.match(regex);
-  if (!match) return null;
-
-  try {
-    const venta = db.registrarVenta({
-      vendedor: match[4] === 'bot' ? vendedor : match[4],
-      producto: match[1],
-      precio: parseFloat(match[2]),
-      cantidad: parseInt(match[3]),
-      chat: chatId,
-    });
-    console.log(`✅ Venta registrada: ${venta.producto} x${venta.cantidad} = $${venta.total}`);
-    return venta;
-  } catch (e) {
-    console.error('Error registrando venta:', e.message);
-    return null;
-  }
-}
-
-function limpiarRespuesta(texto) {
-  return texto.replace(/\[VENTA:[^\]]*\]/gi, '').trim();
-}
-
-// ──────────────────────────────────────────────
-// COMANDOS ADMIN
-// ──────────────────────────────────────────────
-
-async function respuestaAdmin(comando) {
-  const ahora = new Date();
-  const inicioDia = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate()).toISOString();
-  const finDia = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate(), 23, 59, 59).toISOString();
-  const inicioSemana = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1).toISOString();
-
-  switch (comando) {
-    case '/ranking':
-    case '/rankingdia': {
-      const ventas = db.obtenerVentas({ desde: inicioDia, hasta: finDia });
-      return formatearRankingVendedores(ventas, 'hoy');
-    }
-    case '/rankingsemana': {
-      const ventas = db.obtenerVentas({ desde: inicioSemana });
-      return formatearRankingVendedores(ventas, 'esta semana');
-    }
-    case '/rankingmes': {
-      const ventas = db.obtenerVentas({ desde: inicioMes });
-      return formatearRankingVendedores(ventas, 'este mes');
-    }
-    case '/productos': {
-      const ventas = db.obtenerVentas({ desde: inicioMes });
-      return formatearRankingProductos(ventas);
-    }
-    case '/ventas': {
-      const ventas = db.obtenerVentas({ desde: inicioDia, hasta: finDia });
-      return formatearListaVentas(ventas);
-    }
-    default:
-      return `🤖 *Comandos disponibles:*
-
-📊 *Ranking Vendedores:*
-/ranking - Ranking del día
-/rankingsemana - Ranking de la semana
-/rankingmes - Ranking del mes
-
-🛍️ *Productos:*
-/productos - Ranking de productos del mes
-
-💰 *Ventas:*
-/ventas - Ventas de hoy
-/venta Prod|Precio|Cant|Vendedor - Registrar venta manual
-
-⚙️ *Gestión:*
-/addproducto Nombre|Precio|Stock - Agregar producto
-/reportediario - Enviar reporte ahora
-/reportesemanal - Enviar reporte semanal ahora
-
-📨 *Reportes automáticos:*
-• Diario: 8:00 PM todos los días
-• Semanal: lunes 8:00 AM`;
-  }
-}
-
-// ──────────────────────────────────────────────
-// FORMATEADORES
-// ──────────────────────────────────────────────
-
-function formatearRankingVendedores(ventas, periodo) {
-  if (ventas.length === 0) return `📊 No hay ventas registradas ${periodo}.`;
-
-  const ranking = db.calcularRanking(ventas);
-  const total = ventas.reduce((s, v) => s + v.total, 0);
-  const medallas = ['🥇', '🥈', '🥉'];
-
-  const filas = ranking.map((r, i) =>
-    `${medallas[i] || `${i + 1}.`} *${r.vendedor}*\n   💰 $${r.totalMonto.toLocaleString('es-CO')} | ${r.totalVentas} venta(s)`
-  ).join('\n\n');
-
-  return `🏆 *RANKING DE VENDEDORES - ${periodo.toUpperCase()}*\n\n${filas}\n\n─────────────────\n💵 *Total: $${total.toLocaleString('es-CO')}*`;
-}
-
-function formatearRankingProductos(ventas) {
-  if (ventas.length === 0) return '🛍️ No hay productos vendidos este mes.';
-
-  const ranking = db.calcularRankingProductos(ventas);
-  const filas = ranking.slice(0, 10).map((p, i) =>
-    `${i + 1}. *${p.producto}*\n   📦 ${p.totalVendido} unid. | 💰 $${p.totalMonto.toLocaleString('es-CO')}`
-  ).join('\n\n');
-
-  return `🛍️ *TOP PRODUCTOS DEL MES*\n\n${filas}`;
-}
-
-function formatearListaVentas(ventas) {
-  if (ventas.length === 0) return '📋 No hay ventas registradas hoy.';
-
-  const total = ventas.reduce((s, v) => s + v.total, 0);
-  const filas = ventas.slice(-15).map(v => {
-    const hora = new Date(v.fecha).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
-    return `• ${hora} | ${v.vendedor} → ${v.producto} x${v.cantidad} = $${v.total.toLocaleString('es-CO')}`;
-  }).join('\n');
-
-  return `📋 *VENTAS DE HOY*\n\n${filas}\n\n─────────────────\n💵 *Total: $${total.toLocaleString('es-CO')}*`;
-}
-
-module.exports = {
-  procesarMensaje,
-  respuestaAdmin,
-  formatearRankingVendedores,
-  formatearRankingProductos,
-  formatearListaVentas,
+// Mapa de números de menú a acciones directas
+const MENU_ACCIONES = {
+  '1': '[REPORTE_HOY]',
+  '2': '[REPORTE_MES]',
+  '3': '[REPORTE_MES_ANT]',
+  '4': '[REPORTE_SEMANA]',
+  '5': '[RANKING_HOY]',
+  '6': '[RANKING_MES]',
+  '7': '[INVENTARIO]',
+  '8': '[REPORTE_RANGO]',
 };
+
+async function procesarMensaje(texto) {
+  // Atajo directo por número de menú
+  if (MENU_ACCIONES[texto.trim()]) {
+    const accion = MENU_ACCIONES[texto.trim()];
+    historial.push({ role: 'user', content: texto });
+    historial.push({ role: 'assistant', content: accion });
+    // Reusar el mismo switch ejecutando con el raw simulado
+    return await ejecutarAccion(accion);
+  }
+
+  historial.push({ role: 'user', content: texto });
+  if (historial.length > 14) historial.shift();
+
+  try {
+    const resp = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...historial],
+      max_tokens: 500,
+      temperature: 0.5,
+    });
+
+    const raw = resp.choices[0].message.content.trim();
+    historial.push({ role: 'assistant', content: raw });
+
+    return await ejecutarAccion(raw);
+
+  } catch (e) {
+    if (e?.status === 429) return '⏳ Demasiadas consultas. Espera unos segundos.';
+    console.error('Error Groq:', e?.message);
+    return '❌ Error procesando tu mensaje. Intenta de nuevo.';
+  }
+}
+
+async function ejecutarAccion(raw) {
+    if (raw.startsWith('[REPORTE_HOY]')) {
+      const datos = await monitor.monitorearVentasDiarias();
+      if (!datos) return '❌ No pude conectar a VectorPOS.';
+      return monitor.generarMensajeMeta(datos);
+    }
+
+    if (raw.startsWith('[REPORTE_MES]')) {
+      const datos = await monitor.monitorearVentasDiarias();
+      if (!datos) return '❌ No pude conectar a VectorPOS.';
+      return monitor.generarMensajeMeta(datos);
+    }
+
+    if (raw.startsWith('[REPORTE_MES_ANT]')) {
+      return await reportesMesAnterior();
+    }
+
+    if (raw.startsWith('[REPORTE_SEMANA]')) {
+      return await reporteSemana();
+    }
+
+    if (raw.startsWith('[REPORTE_RANGO]')) {
+      // Extraer fechas si las hay: [REPORTE_RANGO:2026-03-01:2026-03-31]
+      const match = raw.match(/\[REPORTE_RANGO:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})\]/);
+      if (match) {
+        return await reporteRango(match[1], match[2]);
+      }
+      // Sin fechas específicas, pedir aclaración
+      return '📅 ¿Para qué rango de fechas quieres el reporte?\nEjemplo: _"ventas del 1 al 15 de marzo"_';
+    }
+
+    if (raw.startsWith('[INVENTARIO]')) {
+      const resultado = await monitor.consultarAlertasInventario();
+      return monitor.generarMensajeAlertas(resultado);
+    }
+
+    if (raw.startsWith('[RANKING_HOY]')) {
+      return await reporteRankingPOS(monitor.fechaHoy(), monitor.fechaHoy(), 'HOY');
+    }
+
+    if (raw.startsWith('[RANKING_SEM]')) {
+      const hoy = new Date();
+      const lunes = new Date(hoy);
+      lunes.setDate(hoy.getDate() - hoy.getDay() + 1);
+      return await reporteRankingPOS(lunes.toISOString().split('T')[0], monitor.fechaHoy(), 'ESTA SEMANA');
+    }
+
+    if (raw.startsWith('[RANKING_MES]') || raw.startsWith('[CAJEROS]')) {
+      return await reporteRankingPOS(monitor.fechaInicioMes(), monitor.fechaHoy(), 'ESTE MES');
+    }
+
+    if (raw.startsWith('[AYUDA]') || raw.startsWith('[MENU]')) {
+      return mensajeMenu();
+    }
+
+    return raw.replace(/\[.*?\]/g, '').trim() || raw;
+}
+
+// ──────────────────────────────────────────────
+// REPORTES VECTORPOS POR PERÍODO
+// ──────────────────────────────────────────────
+
+async function reportesMesAnterior() {
+  const hoy = new Date();
+  const primerDiaMesAnt = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
+  const ultimoDiaMesAnt = new Date(hoy.getFullYear(), hoy.getMonth(), 0);
+  const desde = primerDiaMesAnt.toISOString().split('T')[0];
+  const hasta = ultimoDiaMesAnt.toISOString().split('T')[0];
+  const nombreMes = primerDiaMesAnt.toLocaleString('es-CO', { month: 'long', year: 'numeric' });
+  return await reporteRango(desde, hasta, `MES ANTERIOR — ${nombreMes.toUpperCase()}`);
+}
+
+async function reporteSemana() {
+  const hoy = new Date();
+  const lunes = new Date(hoy);
+  lunes.setDate(hoy.getDate() - hoy.getDay() + 1);
+  const desde = lunes.toISOString().split('T')[0];
+  const hasta = monitor.fechaHoy();
+  return await reporteRango(desde, hasta, 'ESTA SEMANA');
+}
+
+async function reporteRango(desde, hasta, titulo) {
+  const tituloFinal = titulo || `${desde} al ${hasta}`;
+  try {
+    const { browser, page } = await monitor.crearSesionPOS();
+    const ventas = await monitor.extraerVentasGenerales(page, desde, hasta);
+    const cajeros = await monitor.extraerVentasCajero(page, desde, hasta);
+    await browser.close();
+
+    const total = ventas.reduce((s, v) => s + v.totalVentas, 0);
+    const tickets = ventas.reduce((s, v) => s + v.tickets, 0);
+    const medallas = ['🥇', '🥈', '🥉'];
+
+    let msg = `📊 *REPORTE — ${tituloFinal}*\n`;
+    msg += `_${desde} → ${hasta}_\n\n`;
+    msg += `💰 *Total: $${total.toLocaleString('es-CO')}*\n`;
+    msg += `🎫 Tickets: ${tickets}\n`;
+    if (tickets > 0) msg += `💵 Promedio ticket: $${Math.round(total / tickets).toLocaleString('es-CO')}\n`;
+
+    if (cajeros.length > 0) {
+      msg += `\n👥 *RANKING CAJEROS:*\n`;
+      cajeros.forEach((c, i) => {
+        const pct = total > 0 ? ((c.total / total) * 100).toFixed(0) : 0;
+        msg += `${medallas[i] || `${i + 1}.`} *${c.cajero}*: $${c.total.toLocaleString('es-CO')} (${pct}%) | ${c.tickets} tickets\n`;
+      });
+    }
+
+    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch (e) {
+    console.error('Error reporte rango:', e.message);
+    return '❌ No pude generar el reporte. Verifica la conexión a VectorPOS.';
+  }
+}
+
+async function reporteRankingPOS(desde, hasta, titulo) {
+  try {
+    const { browser, page } = await monitor.crearSesionPOS();
+    const cajeros = await monitor.extraerVentasCajero(page, desde, hasta);
+    const ventas = await monitor.extraerVentasGenerales(page, desde, hasta);
+    await browser.close();
+
+    const total = ventas.reduce((s, v) => s + v.totalVentas, 0);
+    const medallas = ['🥇', '🥈', '🥉'];
+
+    if (!cajeros.length) return `📊 Sin datos de cajeros para ${titulo}.`;
+
+    let msg = `👥 *RANKING ${titulo}*\n\n`;
+    cajeros.forEach((c, i) => {
+      const pct = total > 0 ? ((c.total / total) * 100).toFixed(0) : 0;
+      msg += `${medallas[i] || `${i + 1}.`} *${c.cajero}*\n`;
+      msg += `   💰 $${c.total.toLocaleString('es-CO')} (${pct}%) | 🎫 ${c.tickets} tickets\n\n`;
+    });
+    msg += `💵 Total: $${total.toLocaleString('es-CO')}\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch (e) {
+    return '❌ No pude consultar el ranking en VectorPOS.';
+  }
+}
+
+// ──────────────────────────────────────────────
+// AYUDA
+// ──────────────────────────────────────────────
+
+function mensajeMenu() {
+  return `👋 *Hola jefe, ¿en qué te puedo ayudar?*
+
+Elige una opción:
+
+1️⃣ Reporte de hoy
+2️⃣ Reporte de este mes
+3️⃣ Reporte del mes pasado
+4️⃣ Reporte de esta semana
+5️⃣ Ranking cajeros hoy
+6️⃣ Ranking cajeros del mes
+7️⃣ Alertas de inventario
+8️⃣ Ventas por rango de fechas
+
+_Escribe el número o dime lo que necesitas_ 😊`;
+}
+
+module.exports = { procesarMensaje };
