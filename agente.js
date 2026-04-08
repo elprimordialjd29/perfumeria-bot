@@ -82,7 +82,14 @@ Ejemplos:
 // FUNCIÓN PRINCIPAL
 // ──────────────────────────────────────────────
 
-// Mapa de números de menú a acciones directas
+// Estado: esperando que el jefe elija entre "ver menú" o "preguntar"
+let esperandoEleccion = false;
+
+function activarEsperaEleccion() {
+  esperandoEleccion = true;
+}
+
+// Mapa de números de menú a acciones directas (activo solo cuando NO se espera elección inicial)
 const MENU_ACCIONES = {
   '1': '[REPORTE_HOY]',
   '2': '[REPORTE_MES]',
@@ -123,9 +130,24 @@ function parsearFechasDeTexto(texto) {
 }
 
 async function procesarMensaje(texto) {
+  const t = texto.trim();
+
+  // ── Elección inicial (después del saludo de bienvenida) ──
+  if (esperandoEleccion) {
+    esperandoEleccion = false;
+    if (t === '1') {
+      return mensajeMenu();
+    }
+    // Opción 2 o cualquier otra cosa → invitar a preguntar libremente
+    if (t === '2') {
+      return '¡Perfecto! Pregúntame lo que necesites 😊\n\n_Puedes pedirme ventas, inventario, cajeros, gastos, o cualquier duda sobre perfumes._';
+    }
+    // Si escribió otra cosa, dejar que siga el flujo normal abajo
+  }
+
   // Atajo directo por número de menú
-  if (MENU_ACCIONES[texto.trim()]) {
-    const accion = MENU_ACCIONES[texto.trim()];
+  if (MENU_ACCIONES[t]) {
+    const accion = MENU_ACCIONES[t];
     historial.push({ role: 'user', content: texto });
     historial.push({ role: 'assistant', content: accion });
     return await ejecutarAccion(accion);
@@ -250,7 +272,8 @@ async function ejecutarAccion(raw) {
     }
 
     if (raw.startsWith('[AYUDA]') || raw.startsWith('[MENU]')) {
-      return mensajeMenu();
+      esperandoEleccion = true;
+      return mensajeBienvenida();
     }
 
     return raw.replace(/\[.*?\]/g, '').trim() || raw;
@@ -591,21 +614,12 @@ async function reporteVentasPorHora(desde, hasta, titulo) {
   }
 }
 
-function mensajeMenu() {
-  return `👋 *Hola jefe, ¿en qué te puedo ayudar?*
-
-1️⃣ Ventas de hoy
-2️⃣ Ventas de este mes
-3️⃣ Ventas del mes pasado
-4️⃣ Ventas de esta semana
-5️⃣ Productos más/menos vendidos del mes
-6️⃣ Medios de pago hoy (efectivo / transferencia)
-7️⃣ Quién trabajó hoy
-8️⃣ Ranking cajeros del mes
-9️⃣ Alertas de inventario
-0️⃣ Ventas por rango de fechas
-
-_También puedo decirte: gastos del mes, ventas por hora, cierres de caja, o recomendarte perfumes_ 😊`;
+function mensajeBienvenida() {
+  return `👋 *¡Hola jefe, qué gusto saludarte!*\n\n¿Cómo te puedo ayudar?\n\n1️⃣ Ver menú de opciones\n2️⃣ Pregúntame algo`;
 }
 
-module.exports = { procesarMensaje };
+function mensajeMenu() {
+  return `📋 *MENÚ DE OPCIONES*\n\n1️⃣ Ventas de hoy\n2️⃣ Ventas de este mes\n3️⃣ Ventas del mes pasado\n4️⃣ Ventas de esta semana\n5️⃣ Productos más/menos vendidos del mes\n6️⃣ Medios de pago hoy (efectivo / transferencia)\n7️⃣ Quién trabajó hoy\n8️⃣ Ranking cajeros del mes\n9️⃣ Alertas de inventario\n0️⃣ Ventas por rango de fechas\n\n_También puedo decirte: gastos del mes, ventas por hora, cierres de caja, o recomendarte perfumes_ 😊`;
+}
+
+module.exports = { procesarMensaje, activarEsperaEleccion, mensajeBienvenida };
