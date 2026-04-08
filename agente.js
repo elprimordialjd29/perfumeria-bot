@@ -41,7 +41,8 @@ Inventar datos confunde al dueño y destruye la confianza. Si no hay etiqueta di
 [RANKING_HOY]       → ranking cajeros hoy
 [RANKING_SEM]       → ranking cajeros semana
 [RANKING_MES]       → ranking cajeros mes
-[INVENTARIO]        → inventario general, stock total, alertas de productos bajos, qué falta
+[INVENTARIO]        → inventario general, stock total, alertas de productos bajos (SIN costos)
+[RESTOCK]           → costo de restock, cuánto costaría reponer el inventario bajo, costo unitario y total por producto, qué falta y cuánto cuesta, cuánto necesito para reponer, inversión para restock
 [VENTAS_INVENTARIO] → reporte completo ventas vs inventario de TODOS los productos: stock actual + vendido este mes, ordenado por más vendido
 [RESTOCK]           → costo de restock, cuánto costaría reponer el inventario bajo, costo unitario y total por producto
 [CRUCE_PRODUCTO:texto] → cruce ventas+inventario de UN producto este mes y hoy. Extrae el término clave. Ej: "cuánto queda de tapa plana 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml] | "single color" → [CRUCE_PRODUCTO:singler color] | "tapa plana 50ml vendido y stock" → [CRUCE_PRODUCTO:tapa plana 50ml]
@@ -77,6 +78,11 @@ Responde directamente SOLO para:
 
 ━━━ EJEMPLOS CORRECTOS ━━━
 "qué perfumes tenemos en inventario" → [INVENTARIO]
+"alertas de inventario" → [INVENTARIO]
+"qué falta y cuánto cuesta" → [RESTOCK]
+"cuánto necesito para reponer el inventario" → [RESTOCK]
+"cuánto costaría el restock" → [RESTOCK]
+"qué falta" → [RESTOCK]
 "ventas vs inventario de todo" → [VENTAS_INVENTARIO]
 "dame el estado del inventario" → [VENTAS_INVENTARIO]
 "estado del inventario" → [VENTAS_INVENTARIO]
