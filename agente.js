@@ -761,7 +761,7 @@ async function reporteCajeroIndividual(nombre, desde, hasta, titulo) {
     if (encontrado.bancolombia > 0) msg += `\n🏦 Bancolombia: $${encontrado.bancolombia.toLocaleString('es-CO')}`;
     if (encontrado.nequi > 0)       msg += `\n📱 Nequi: $${encontrado.nequi.toLocaleString('es-CO')}`;
     msg += `\n`;
-    msg += bloquesMeta(totalPeriodo, desde, hasta);
+    msg += bloquesMeta(encontrado.total, desde, hasta);
     msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
     return msg;
   } catch (e) {
