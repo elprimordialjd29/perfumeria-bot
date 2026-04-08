@@ -414,9 +414,15 @@ async function _obtenerSaldosBrutos() {
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
 
     let saldosData = null;
+    let productosData = null;
     page.on('response', async res => {
-      if (res.url().includes('kardex/saldos')) {
+      const url = res.url();
+      if (url.includes('kardex/saldos')) {
         try { saldosData = JSON.parse(await res.text()); } catch(e) {}
+      }
+      // Capturar catálogo de productos (endpoint con nombre, categoría, costo)
+      if (url.includes('producto') && url.includes('lista') || url.includes('catalogo') || url.includes('inventario/producto')) {
+        try { const d = JSON.parse(await res.text()); if (d?.datos || Array.isArray(d)) productosData = d?.datos || d; } catch(e) {}
       }
     });
 
@@ -450,7 +456,10 @@ async function _obtenerSaldosBrutos() {
     await browser.close();
     browser = null;
 
-    return saldosData?.datos?.length ? saldosData.datos : [];
+    const saldos = saldosData?.datos?.length ? saldosData.datos : [];
+    // Loguear campos disponibles para diagnóstico
+    if (saldos[0]) console.log('📋 Campos saldo:', Object.keys(saldos[0]).join(', '));
+    return saldos;
   } catch (e) {
     console.error('❌ Error obteniendo saldos inventario:', e.message);
     if (browser) await browser.close();
@@ -458,22 +467,131 @@ async function _obtenerSaldosBrutos() {
   }
 }
 
-/** Retorna TODOS los productos del inventario (sin filtrar) */
+/**
+ * Obtiene el catálogo completo de productos (Nombre, Categoría, Costo)
+ * desde app.vectorpos.com.co navegando al módulo de inventario/productos.
+ */
+async function _obtenerCatalogoProductos() {
+  const user = process.env.VECTORPOS_USER;
+  const pass = process.env.VECTORPOS_PASS;
+  let browser = null;
+  try {
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+    });
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+
+    let catalogoData = null;
+    page.on('response', async res => {
+      const url = res.url();
+      // Capturar cualquier respuesta JSON que parezca lista de productos
+      if ((url.includes('producto') || url.includes('articulo') || url.includes('item')) &&
+          (url.includes('lista') || url.includes('index') || url.includes('get') || url.includes('all'))) {
+        try {
+          const text = await res.text();
+          const d = JSON.parse(text);
+          const arr = d?.datos || d?.data || d?.items || (Array.isArray(d) ? d : null);
+          if (arr?.length > 10) {
+            console.log(`📦 Posible catálogo en: ${url} (${arr.length} items)`);
+            if (arr[0]) console.log('📋 Campos catálogo:', Object.keys(arr[0]).join(', '));
+            catalogoData = arr;
+          }
+        } catch(e) {}
+      }
+    });
+
+    await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'networkidle0', timeout: 30000 });
+    await page.type('#txtEmail', user, { delay: 30 });
+    await page.type('#txtClave', pass, { delay: 30 });
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+      page.click('#btnEntrar'),
+    ]);
+    if (page.url().includes('cambioSucursal')) {
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+        page.click('a,button'),
+      ]);
+    }
+
+    // Intentar navegar al módulo de productos/inventario
+    await page.evaluate(() => {
+      const textos = ['Productos', 'Artículos', 'Inventario', 'Items', 'Catálogo'];
+      for (const t of textos) {
+        const link = [...document.querySelectorAll('a')].find(a => a.innerText.trim() === t);
+        if (link) { link.click(); return; }
+      }
+    });
+    await new Promise(r => setTimeout(r, 3000));
+
+    // Intentar cargar lista si hay botón
+    await page.evaluate(() => {
+      const btn = document.querySelector('#btnCargar, #btnBuscar, [data-action="load"]');
+      if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await new Promise(r => setTimeout(r, 4000));
+
+    await browser.close();
+    browser = null;
+    return catalogoData;
+  } catch(e) {
+    console.error('❌ Error catálogo productos:', e.message);
+    if (browser) await browser.close();
+    return null;
+  }
+}
+
+/** Retorna TODOS los productos del inventario cruzando saldos + catálogo */
 async function consultarTodoInventario() {
   console.log('\n📦 Consultando inventario completo...');
-  const datos = await _obtenerSaldosBrutos();
-  if (!datos) return null;
-  console.log(`✅ ${datos.length} productos en inventario`);
-  // Loguear primer item para ver todos los campos disponibles
-  if (datos[0]) console.log('📋 Campos inventario:', Object.keys(datos[0]).join(', '));
-  return datos.map(p => ({
-    nombre:      p.Nombre || '',
-    saldo:       parseFloat(p['Saldo Actual']) || 0,
-    medida:      p.Medida || '',
-    codigo:      p.Codigo || '',
-    costoUnidad: parsearMontoJSON(p['Costo Unidad'] ?? p['Costo Unitario'] ?? p['Costo'] ?? 0),
-    costoTotal:  parsearMontoJSON(p['Costo Total']  ?? p['Valor Total']    ?? 0),
-  }));
+
+  // Obtener saldos y catálogo en paralelo (sesiones separadas)
+  const [saldos, catalogo] = await Promise.all([
+    _obtenerSaldosBrutos(),
+    _obtenerCatalogoProductos(),
+  ]);
+
+  if (!saldos) return null;
+  console.log(`✅ ${saldos.length} saldos | catálogo: ${catalogo?.length || 0} productos`);
+
+  // Construir mapa de catálogo por nombre normalizado
+  const mapacat = {};
+  if (catalogo) {
+    catalogo.forEach(p => {
+      const nombre = (p.Nombre || p.nombre || p.NOMBRE || '').trim();
+      if (!nombre) return;
+      const key = nombre.toLowerCase();
+      mapacat[key] = {
+        categoria:   p.Categoria  || p.categoria  || p.Categoría  || p.CATEGORIA  || '',
+        medida:      p.Medida     || p.medida     || p.MEDIDA     || '',
+        costoUnidad: parsearMontoJSON(p.Costo ?? p['Costo Unidad'] ?? p['Costo Unitario'] ?? p.costo ?? 0),
+      };
+    });
+  }
+
+  return saldos.map(p => {
+    const nombre = (p.Nombre || '').trim();
+    const key    = nombre.toLowerCase();
+    const cat    = mapacat[key] || {};
+
+    // Costo unidad: priorizar catálogo, fallback saldo
+    const costoUnidad = cat.costoUnidad ||
+      parsearMontoJSON(p['Costo Unidad'] ?? p['Costo Unitario'] ?? p['Costo'] ?? 0);
+    const saldo = parseFloat(p['Saldo Actual']) || 0;
+
+    return {
+      nombre,
+      saldo,
+      medida:      cat.medida    || p.Medida || '',
+      categoria:   cat.categoria || '',
+      codigo:      p.Codigo || '',
+      costoUnidad,
+      costoTotal:  costoUnidad > 0 ? costoUnidad * saldo :
+                   parsearMontoJSON(p['Costo Total'] ?? p['Valor Total'] ?? 0),
+    };
+  });
 }
 
 async function consultarAlertasInventario() {
