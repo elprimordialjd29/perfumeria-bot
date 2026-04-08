@@ -503,23 +503,59 @@ async function reporteRankingPOS(desde, hasta, titulo) {
   try {
     const { browser, page } = await monitor.crearSesionPOS();
     const cajeros = await monitor.extraerVentasCajero(page, desde, hasta);
-    const ventas = await monitor.extraerVentasGenerales(page, desde, hasta);
+
+    // Desglose por día si el período es mayor a 1 día
+    const diasEntre = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+    const numDias = diasEntre(desde, hasta);
+    let porDia = []; // [{ fecha, label, cajeros: [{cajero, total, tickets}] }]
+
+    if (numDias > 0) {
+      const dias = [];
+      for (let i = 0; i <= numDias; i++) {
+        const d = new Date(desde);
+        d.setDate(d.getDate() + i);
+        dias.push(d.toISOString().split('T')[0]);
+      }
+      for (const dia of dias) {
+        const datosDia = await monitor.extraerVentasCajero(page, dia, dia);
+        if (datosDia.length > 0) {
+          const label = new Date(dia + 'T12:00:00').toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
+          porDia.push({ fecha: dia, label, cajeros: datosDia });
+        }
+      }
+    }
+
     await browser.close();
 
-    const total = ventas.reduce((s, v) => s + v.totalVentas, 0);
+    const totalGeneral = cajeros.reduce((s, c) => s + c.total, 0);
     const medallas = ['🥇', '🥈', '🥉'];
 
     if (!cajeros.length) return `📊 Sin datos de cajeros para ${titulo}.`;
 
     let msg = `👥 *RANKING ${titulo}*\n\n`;
     cajeros.forEach((c, i) => {
-      const pct = total > 0 ? ((c.total / total) * 100).toFixed(0) : 0;
+      const pct = totalGeneral > 0 ? ((c.total / totalGeneral) * 100).toFixed(0) : 0;
       msg += `${medallas[i] || `${i + 1}.`} *${c.cajero}*\n`;
-      msg += `   💰 $${c.total.toLocaleString('es-CO')} (${pct}%) | 🎫 ${c.tickets} tickets\n\n`;
+      msg += `   💰 $${c.total.toLocaleString('es-CO')} (${pct}%) | 🎫 ${c.tickets} tickets\n`;
+
+      // Desglose por día para este cajero
+      if (porDia.length > 0) {
+        const normalizar = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const nombreN = normalizar(c.cajero);
+        porDia.forEach(d => {
+          const enc = d.cajeros.find(x => normalizar(x.cajero) === nombreN);
+          if (enc && enc.total > 0) {
+            msg += `   📅 ${d.label}: $${enc.total.toLocaleString('es-CO')} (${enc.tickets} tkt)\n`;
+          }
+        });
+      }
+      msg += '\n';
     });
-    msg += `💵 Total: $${total.toLocaleString('es-CO')}\n─────────────────\n🤖 _VectorPOS — Chu_`;
+
+    msg += `💵 *Total: $${totalGeneral.toLocaleString('es-CO')}*\n─────────────────\n🤖 _VectorPOS — Chu_`;
     return msg;
   } catch (e) {
+    console.error('Error ranking:', e.message);
     return '❌ No pude consultar el ranking en VectorPOS.';
   }
 }
