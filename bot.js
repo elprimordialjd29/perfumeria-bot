@@ -21,7 +21,7 @@ const fs = require('fs');
 // ──────────────────────────────────────────────
 
 const errores = [];
-if (!process.env.ANTHROPIC_API_KEY) errores.push('ANTHROPIC_API_KEY');
+if (!process.env.GROQ_API_KEY)     errores.push('GROQ_API_KEY');
 if (!process.env.SUPABASE_URL)     errores.push('SUPABASE_URL');
 if (!process.env.SUPABASE_KEY)     errores.push('SUPABASE_KEY');
 if (!process.env.VECTORPOS_USER)   errores.push('VECTORPOS_USER');
@@ -51,7 +51,7 @@ async function iniciar() {
   console.log('\n🤖 Iniciando Chu...');
   console.log('───────────────────────────────────');
   console.log('📱 Interface: Telegram');
-  console.log('🧠 IA: Groq / Llama 3.3 70B (GRATIS)');
+  console.log('🧠 IA: Groq / Llama 3.3 70B');
   console.log('🗄️  DB: Supabase');
   console.log('💻 POS: VectorPOS');
   console.log('📧 Email: ' + (process.env.EMAIL_USER || 'no configurado'));
