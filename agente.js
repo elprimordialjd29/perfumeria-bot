@@ -53,6 +53,9 @@ Inventar datos confunde al dueño y destruye la confianza. Si no hay etiqueta di
 [REQUERIMIENTO]     → crear requerimiento, nota, tarea
 [VER_REQS]          → ver requerimientos pendientes
 [EXPORTAR_EXCEL]    → exportar Excel, CSV, archivo
+[AGREGAR_USUARIO:chatid:nombre] → agregar usuario autorizado. Ej: "agrega al usuario 123456 como Laura" → [AGREGAR_USUARIO:123456:Laura] (SOLO ADMIN)
+[VER_USUARIOS]      → ver usuarios autorizados, quién tiene acceso (SOLO ADMIN)
+[QUITAR_USUARIO:chatid] → quitar acceso a un usuario (SOLO ADMIN)
 [MENU]              → saludos: hola, buenos días, buenas, hey
 
 ━━━ CONOCIMIENTO PROPIO (SIN etiqueta, SIN inventar datos del negocio) ━━━
@@ -176,7 +179,7 @@ function parsearFechasDeTexto(texto) {
   return null;
 }
 
-async function procesarMensaje(texto) {
+async function procesarMensaje(texto, esAdmin = true) {
   const t = texto.trim();
 
   // ── Estado: esperando descripción de un requerimiento ──
@@ -232,10 +235,12 @@ async function procesarMensaje(texto) {
     const r = fechasRelativas();
     const contextoFechas = `\n\nCONTEXTO ACTUAL: Hoy es ${r.hoy} (${new Date().toLocaleDateString('es-CO',{weekday:'long'})}). Ayer fue ${r.ayer}. Antier fue ${r.antier}. Esta semana va del lunes ${r.lunes} al ${r.hoy}.`;
 
+    const restriccion = esAdmin ? '' : '\n\nNOTA: Este usuario NO es el administrador. NO uses etiquetas de administración: [AGREGAR_USUARIO], [VER_USUARIOS], [QUITAR_USUARIO], [REQUERIMIENTO], [VER_REQS], [EXPORTAR_EXCEL].';
+
     const resp = await claude.messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 500,
-      system: SYSTEM_PROMPT + contextoFechas,
+      system: SYSTEM_PROMPT + contextoFechas + restriccion,
       messages: historial,
     });
 
@@ -384,6 +389,22 @@ async function ejecutarAccion(raw) {
 
     if (raw.startsWith('[EXPORTAR_EXCEL]')) {
       return await exportarExcelMes();
+    }
+
+    if (raw.startsWith('[AGREGAR_USUARIO:')) {
+      const match = raw.match(/\[AGREGAR_USUARIO:([^:]+):([^\]]+)\]/);
+      if (!match) return '❌ Formato: _"agrega al usuario 123456 como Laura"_';
+      return await agregarUsuarioAutorizado(match[1].trim(), match[2].trim());
+    }
+
+    if (raw.startsWith('[VER_USUARIOS]')) {
+      return await verUsuariosAutorizados();
+    }
+
+    if (raw.startsWith('[QUITAR_USUARIO:')) {
+      const match = raw.match(/\[QUITAR_USUARIO:([^\]]+)\]/);
+      if (!match) return '❌ Dime el ID del usuario a quitar.';
+      return await quitarUsuarioAutorizado(match[1].trim());
     }
 
     if (raw.startsWith('[AYUDA]') || raw.startsWith('[MENU]')) {
@@ -996,6 +1017,45 @@ async function exportarExcelMes() {
   } catch(e) {
     console.error('Error generando Excel:', e.message);
     return '❌ No pude generar el archivo. Intenta de nuevo.';
+  }
+}
+
+// ──────────────────────────────────────────────
+// GESTIÓN DE USUARIOS AUTORIZADOS
+// ──────────────────────────────────────────────
+
+async function agregarUsuarioAutorizado(chatId, nombre) {
+  try {
+    const agregado = await db.agregarUsuario({ chatId, nombre });
+    if (!agregado) return `ℹ️ El usuario *${nombre}* (ID: \`${chatId}\`) ya tiene acceso.`;
+    return `✅ *${nombre}* agregado correctamente.\n\nAhora puede escribirle a Chu en Telegram con su cuenta.`;
+  } catch(e) {
+    return '❌ No pude agregar el usuario. Intenta de nuevo.';
+  }
+}
+
+async function verUsuariosAutorizados() {
+  try {
+    const lista = await db.listarUsuarios();
+    if (!lista.length) return '👥 No hay usuarios autorizados aún.\n\nDi: _"agrega al usuario 123456 como Laura"_';
+    let msg = `👥 *USUARIOS AUTORIZADOS (${lista.length})*\n\n`;
+    lista.forEach((u, i) => {
+      msg += `${i + 1}. *${u.nombre}* — ID: \`${u.chatId}\`\n   _Desde: ${u.fecha?.split('T')[0]}_\n`;
+    });
+    msg += `\n_Para quitar: "quita acceso al usuario [chatId]"_`;
+    return msg;
+  } catch(e) {
+    return '❌ No pude cargar los usuarios.';
+  }
+}
+
+async function quitarUsuarioAutorizado(chatId) {
+  try {
+    const quitado = await db.quitarUsuario(chatId);
+    if (!quitado) return `ℹ️ No encontré un usuario con ID \`${chatId}\`.`;
+    return `✅ Usuario \`${chatId}\` removido. Ya no tiene acceso a Chu.`;
+  } catch(e) {
+    return '❌ No pude quitar el usuario. Intenta de nuevo.';
   }
 }
 

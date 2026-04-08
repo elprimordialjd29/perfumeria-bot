@@ -13,6 +13,7 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const agente = require('./agente');
 const reportes = require('./reportes');
+const db = require('./database');
 const fs = require('fs');
 
 // ──────────────────────────────────────────────
@@ -77,35 +78,44 @@ async function iniciar() {
 
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id.toString();
+  const esAdmin = chatId === ADMIN_ID;
 
-  // Solo responder al administrador
-  if (chatId !== ADMIN_ID) {
-    // Si alguien desconocido escribe, mostrar su ID para facilitar configuración
-    if (msg.text === '/start' || msg.text === '/id') {
-      await bot.sendMessage(chatId, `Tu Chat ID es: \`${chatId}\`\nAgrega este número como TELEGRAM_ADMIN_ID en el .env`, { parse_mode: 'Markdown' });
+  // Verificar acceso
+  if (!esAdmin) {
+    const autorizado = await db.esUsuarioAutorizado(chatId);
+    if (!autorizado) {
+      if (msg.text === '/start' || msg.text === '/id') {
+        await bot.sendMessage(chatId,
+          `👋 Hola! Soy *Chu*, el asistente de la perfumería.\n\nPara acceder, comparte este ID con el administrador:\n\`${chatId}\``,
+          { parse_mode: 'Markdown' }
+        );
+      } else {
+        await bot.sendMessage(chatId,
+          `⛔ No tienes acceso a Chu.\nComparte tu ID con el administrador: \`${chatId}\``,
+          { parse_mode: 'Markdown' }
+        );
+      }
+      return;
     }
-    return;
   }
 
   const texto = msg.text?.trim();
   if (!texto) return;
 
-  console.log(`📩 [${new Date().toLocaleTimeString('es-CO')}] Chu recibió: ${texto.substring(0, 80)}`);
+  const nombre = msg.from?.first_name || chatId;
+  console.log(`📩 [${new Date().toLocaleTimeString('es-CO')}] ${nombre}: ${texto.substring(0, 80)}`);
 
-  // Indicador de "escribiendo..."
   await bot.sendChatAction(chatId, 'typing');
 
   try {
-    const respuesta = await agente.procesarMensaje(texto);
+    const respuesta = await agente.procesarMensaje(texto, esAdmin);
 
-    // Respuesta tipo archivo (CSV/Excel)
     if (respuesta && typeof respuesta === 'object' && respuesta.tipo === 'archivo') {
       await bot.sendDocument(chatId, respuesta.path, {}, {
         filename: respuesta.nombre,
         contentType: 'text/csv',
       });
       await enviarMensaje(chatId, respuesta.caption || '📎 Archivo enviado.');
-      // Limpiar archivo temporal
       try { fs.unlinkSync(respuesta.path); } catch(e) {}
     } else {
       await enviarMensaje(chatId, respuesta);

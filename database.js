@@ -207,6 +207,42 @@ async function listarRequerimientos() {
   return data?.value ? JSON.parse(data.value) : [];
 }
 
+// ──────────────────────────────────────────────
+// USUARIOS AUTORIZADOS
+// Guardados como JSON en config (clave: "usuarios_autorizados")
+// ──────────────────────────────────────────────
+
+async function listarUsuarios() {
+  const { data } = await getSupabase().from('config').select('value').eq('key', 'usuarios_autorizados').single();
+  return data?.value ? JSON.parse(data.value) : [];
+}
+
+async function agregarUsuario({ chatId, nombre }) {
+  const lista = await listarUsuarios();
+  if (lista.find(u => u.chatId === chatId)) return false; // ya existe
+  lista.push({ chatId, nombre, fecha: new Date().toISOString() });
+  await getSupabase().from('config').upsert(
+    [{ key: 'usuarios_autorizados', value: JSON.stringify(lista) }],
+    { onConflict: 'key' }
+  );
+  return true;
+}
+
+async function quitarUsuario(chatId) {
+  const lista = await listarUsuarios();
+  const nueva = lista.filter(u => u.chatId !== chatId);
+  await getSupabase().from('config').upsert(
+    [{ key: 'usuarios_autorizados', value: JSON.stringify(nueva) }],
+    { onConflict: 'key' }
+  );
+  return lista.length !== nueva.length;
+}
+
+async function esUsuarioAutorizado(chatId) {
+  const lista = await listarUsuarios();
+  return lista.some(u => u.chatId === chatId);
+}
+
 module.exports = {
   registrarVenta,
   obtenerVentas,
@@ -223,4 +259,8 @@ module.exports = {
   actualizarConfig,
   guardarRequerimiento,
   listarRequerimientos,
+  listarUsuarios,
+  agregarUsuario,
+  quitarUsuario,
+  esUsuarioAutorizado,
 };
