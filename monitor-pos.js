@@ -393,8 +393,29 @@ async function extraerVentasProducto(page, fechaInicial, fechaFinal) {
 // ──────────────────────────────────────────────
 
 const APP_BASE = 'https://app.vectorpos.com.co';
-const LIMITE_GRAMOS = 50;
-const LIMITE_UNIDADES = 20;
+
+// ── Umbrales de alerta por categoría ──
+// ESENCIAS (M/F/U), REPLICA, ORIGINALES → alerta < 500g, crítico < 50g
+// ENVASE → alerta < 15 unidades
+// INSUMOS VARIOS (alcohol) → alerta < 500, SIN restock
+// CREMA CORPORAL → alerta < 10
+const UMBRALES = {
+  'ESENCIAS M':      { alerta: 500, critico: 50, medida: 'gr', restock: true  },
+  'ESENCIAS F':      { alerta: 500, critico: 50, medida: 'gr', restock: true  },
+  'ESENCIAS U':      { alerta: 500, critico: 50, medida: 'gr', restock: true  },
+  'REPLICA 1.1':     { alerta: 500, critico: 50, medida: 'gr', restock: true  },
+  'ORIGINALES':      { alerta: 500, critico: 50, medida: 'gr', restock: true  },
+  'ENVASE':          { alerta: 15,  critico: 5,  medida: 'u',  restock: true  },
+  'INSUMOS VARIOS':  { alerta: 500, critico: 100, medida: 'u', restock: false },
+  'CREMA CORPORAL':  { alerta: 10,  critico: 3,  medida: 'u',  restock: true  },
+};
+const LIMITE_GRAMOS   = 500; // default gramos
+const LIMITE_UNIDADES = 15;  // default unidades
+
+/** Formatea un monto en pesos colombianos (enteros, sin decimales) */
+function formatPesos(val) {
+  return Math.round(val).toLocaleString('es-CO');
+}
 
 /**
  * Función base: hace login en app.vectorpos.com.co y retorna
@@ -596,31 +617,42 @@ async function consultarTodoInventario() {
 
 async function consultarAlertasInventario() {
   console.log('\n📦 Consultando alertas inventario...');
-  const productos = await _obtenerSaldosBrutos();
-  if (!productos) return null;
-  console.log(`✅ ${productos.length} productos cargados`);
+  const inv = await consultarTodoInventario();
+  if (!inv) return null;
+  console.log(`✅ ${inv.length} productos cargados`);
 
-  const alertasGramos = productos
-    .filter(p => {
-      const medida = (p.Medida || '').toLowerCase();
-      const saldo = parseFloat(p['Saldo Actual']) || 0;
-      return medida === 'gramos' && saldo < LIMITE_GRAMOS;
-    })
-    .map(p => ({ nombre: p.Nombre, saldo: parseFloat(p['Saldo Actual']), medida: p.Medida }))
-    .sort((a, b) => a.saldo - b.saldo);
+  const alertas = inv.filter(p => {
+    const cat = (p.categoria || '').toUpperCase().trim();
+    const umbral = Object.entries(UMBRALES).find(([k]) => cat.includes(k));
+    const limite = umbral ? umbral[1].alerta :
+      (p.medida?.toLowerCase().includes('gr') || p.medida?.toLowerCase().includes('ml')) ? LIMITE_GRAMOS : LIMITE_UNIDADES;
+    return p.saldo < limite;
+  }).map(p => ({
+    nombre: p.nombre, saldo: p.saldo, medida: p.medida,
+    categoria: p.categoria, costoUnidad: p.costoUnidad || 0,
+  })).sort((a, b) => {
+    if (a.saldo === 0 && b.saldo > 0) return -1;
+    if (b.saldo === 0 && a.saldo > 0) return 1;
+    return a.saldo - b.saldo;
+  });
 
-  const alertasUnidades = productos
-    .filter(p => {
-      const medida = (p.Medida || '').toLowerCase();
-      const nombre = (p.Nombre || '').toLowerCase();
-      const saldo = parseFloat(p['Saldo Actual']) || 0;
-      return medida === 'unidad' && !nombre.includes('original') && saldo < LIMITE_UNIDADES;
-    })
-    .map(p => ({ nombre: p.Nombre, saldo: parseFloat(p['Saldo Actual']), medida: p.Medida }))
-    .sort((a, b) => a.saldo - b.saldo);
+  // Separar por tipo para compatibilidad con código existente
+  const alertasGramos   = alertas.filter(p => p.medida?.toLowerCase().includes('gr') || p.medida?.toLowerCase().includes('ml'));
+  const alertasUnidades = alertas.filter(p => !p.medida?.toLowerCase().includes('gr') && !p.medida?.toLowerCase().includes('ml'));
 
-  console.log(`⚠️  Alertas gramos: ${alertasGramos.length} | Alertas unidades: ${alertasUnidades.length}`);
-  return { alertasGramos, alertasUnidades, total: productos.length };
+  console.log(`⚠️ Alertas gramos: ${alertasGramos.length} | unidades: ${alertasUnidades.length}`);
+  return { alertasGramos, alertasUnidades, alertas, total: inv.length };
+}
+
+/** Filtra inventario bajo por categoría específica */
+async function consultarInventarioPorCategoria(categoria) {
+  const inv = await consultarTodoInventario();
+  if (!inv) return null;
+  const catN = categoria.toUpperCase().trim();
+  return inv.filter(p => {
+    const c = (p.categoria || '').toUpperCase();
+    return c.includes(catN) || catN.includes(c.split(' ')[0]);
+  }).sort((a, b) => a.saldo - b.saldo);
 }
 
 function generarMensajeAlertas(resultado) {
@@ -763,6 +795,7 @@ module.exports = {
   generarMensajeMeta,
   consultarAlertasInventario,
   consultarTodoInventario,
+  consultarInventarioPorCategoria,
   generarMensajeAlertas,
   crearSesionPOS,
   extraerVentasGenerales,
@@ -774,4 +807,6 @@ module.exports = {
   META_MENSUAL,
   fechaHoy,
   fechaInicioMes,
+  formatPesos,
+  UMBRALES,
 };

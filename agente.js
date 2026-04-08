@@ -42,9 +42,9 @@ Inventar datos confunde al dueño y destruye la confianza. Si no hay etiqueta di
 [RANKING_SEM]       → ranking cajeros semana
 [RANKING_MES]       → ranking cajeros mes
 [INVENTARIO]        → inventario general, stock total, alertas de productos bajos (SIN costos)
-[RESTOCK]           → costo de restock, cuánto costaría reponer el inventario bajo, costo unitario y total por producto, qué falta y cuánto cuesta, cuánto necesito para reponer, inversión para restock
+[INVENTARIO_CAT:categoria] → stock e inventario bajo de UNA categoría. Ej: "qué falta de ENVASE" → [INVENTARIO_CAT:ENVASE] | "esencias masculinas" → [INVENTARIO_CAT:ESENCIAS M] | "réplicas bajas" → [INVENTARIO_CAT:REPLICA 1.1] | "insumos" → [INVENTARIO_CAT:INSUMOS VARIOS] | "qué falta de esencias" → [INVENTARIO_CAT:ESENCIAS] | "originales" → [INVENTARIO_CAT:ORIGINALES] | "cremas" → [INVENTARIO_CAT:CREMA CORPORAL]
+[RESTOCK]           → costo de restock, cuánto costaría reponer el inventario bajo, qué falta y cuánto cuesta, inversión para restock
 [VENTAS_INVENTARIO] → reporte completo ventas vs inventario de TODOS los productos: stock actual + vendido este mes, ordenado por más vendido
-[RESTOCK]           → costo de restock, cuánto costaría reponer el inventario bajo, costo unitario y total por producto
 [CRUCE_PRODUCTO:texto] → cruce ventas+inventario de UN producto este mes y hoy. Extrae el término clave. Ej: "cuánto queda de tapa plana 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml] | "single color" → [CRUCE_PRODUCTO:singler color] | "tapa plana 50ml vendido y stock" → [CRUCE_PRODUCTO:tapa plana 50ml]
 [CRUCE_PRODUCTO_RANGO:texto:YYYY-MM-DD:YYYY-MM-DD] → cuánto se vendió de un producto en un período específico + stock actual. Convierte fechas relativas a YYYY-MM-DD. Ej:
   "cuánto se vendió de singler color ayer" → [CRUCE_PRODUCTO_RANGO:singler color:AYER:AYER]
@@ -68,6 +68,19 @@ Inventar datos confunde al dueño y destruye la confianza. Si no hay etiqueta di
 [QUITAR_USUARIO:chatid] → quitar acceso a un usuario (SOLO ADMIN)
 [MENU]              → saludos: hola, buenos días, buenas, hey
 
+━━━ CATEGORÍAS DEL NEGOCIO ━━━
+El inventario se organiza en estas categorías:
+- ESENCIAS M → esencias masculinas (perfumes hombre)
+- ESENCIAS F → esencias femeninas (perfumes mujer)
+- ESENCIAS U → esencias unisex
+- REPLICA 1.1 → réplicas/clones de perfumes de marca
+- ORIGINALES → perfumes originales de marca
+- ENVASE → envases, frascos, tapaderas (tapa plana, singler, beirut, bomba, cartier, etc.)
+- INSUMOS VARIOS → alcohol, materiales de producción, maletines, perfumeros
+- CREMA CORPORAL → cremas y lociones
+
+Cuando el usuario pregunte por una categoría, usa el nombre exacto: "esencias masculinas" → ESENCIAS M, "réplicas" → REPLICA 1.1, "envases" → ENVASE, etc.
+
 ━━━ CONOCIMIENTO PROPIO (SIN etiqueta, SIN inventar datos del negocio) ━━━
 Responde directamente SOLO para:
 - Perfumes árabes y marcas: Lattafa, Al Haramain, Ajmal, Rasasi, Swiss Arabian, Armaf, Nabeel
@@ -79,6 +92,14 @@ Responde directamente SOLO para:
 ━━━ EJEMPLOS CORRECTOS ━━━
 "qué perfumes tenemos en inventario" → [INVENTARIO]
 "alertas de inventario" → [INVENTARIO]
+"qué falta de ENVASE" → [INVENTARIO_CAT:ENVASE]
+"qué falta de esencias" → [INVENTARIO_CAT:ESENCIAS]
+"esencias masculinas bajas" → [INVENTARIO_CAT:ESENCIAS M]
+"esencias femeninas bajas" → [INVENTARIO_CAT:ESENCIAS F]
+"réplicas bajas" → [INVENTARIO_CAT:REPLICA 1.1]
+"qué falta de originales" → [INVENTARIO_CAT:ORIGINALES]
+"insumos bajos" → [INVENTARIO_CAT:INSUMOS VARIOS]
+"cremas bajas" → [INVENTARIO_CAT:CREMA CORPORAL]
 "qué falta y cuánto cuesta" → [RESTOCK]
 "cuánto necesito para reponer el inventario" → [RESTOCK]
 "cuánto costaría el restock" → [RESTOCK]
@@ -407,6 +428,12 @@ async function ejecutarAccion(raw) {
       const match = raw.match(/\[CAJERO_RANGO:([^:]+):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})\]/);
       if (match) return await reporteCajeroIndividual(match[1].trim(), match[2], match[3], `${match[2]} → ${match[3]}`);
       return '📅 No entendí el rango. Ejemplo: _"ventas de Michelle del 1 al 7 de abril"_';
+    }
+
+    if (raw.startsWith('[INVENTARIO_CAT:')) {
+      const match = raw.match(/\[INVENTARIO_CAT:([^\]]+)\]/);
+      const cat = match ? match[1].trim() : '';
+      return await reporteInventarioCategoria(cat);
     }
 
     if (raw.startsWith('[VENTAS_INVENTARIO]')) {
@@ -1060,6 +1087,77 @@ async function reporteVentasPorHora(desde, hasta, titulo) {
 }
 
 // ──────────────────────────────────────────────
+// INVENTARIO POR CATEGORÍA
+// ──────────────────────────────────────────────
+
+async function reporteInventarioCategoria(categoria) {
+  if (!categoria) return '❌ Especifica una categoría. Ej: "qué falta de ENVASE"';
+  try {
+    const productos = await monitor.consultarInventarioPorCategoria(categoria);
+    if (!productos) return '❌ No pude conectar al inventario.';
+
+    const catN = categoria.toUpperCase();
+    const umbrales = monitor.UMBRALES;
+
+    // Detectar umbral aplicable
+    const umbralKey = Object.keys(umbrales).find(k => catN.includes(k) || k.includes(catN));
+    const umbral = umbralKey ? umbrales[umbralKey] : { alerta: 500, critico: 50, restock: true };
+
+    const bajos    = productos.filter(p => p.saldo < umbral.alerta);
+    const normales = productos.filter(p => p.saldo >= umbral.alerta);
+    const fp       = monitor.formatPesos;
+
+    if (!productos.length) return `📦 No encontré productos en la categoría *${catN}*.`;
+
+    const agotados  = bajos.filter(p => p.saldo <= 0);
+    const criticos  = bajos.filter(p => p.saldo > 0 && p.saldo <= umbral.critico);
+    const alertaBaj = bajos.filter(p => p.saldo > umbral.critico);
+
+    let totalRestock = 0;
+    const lineas = [];
+
+    const agregarProducto = (p) => {
+      const nivel = p.saldo <= 0 ? '🚨 AGOTADO' : p.saldo <= umbral.critico ? '🔴 CRÍTICO' : '🟡 BAJO';
+      let linea = `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida}\n`;
+      if (p.costoUnidad > 0 && umbral.restock) {
+        const reponer = Math.max(0, umbral.alerta - p.saldo);
+        const costo = reponer * p.costoUnidad;
+        totalRestock += costo;
+        linea += `   💵 $${fp(p.costoUnidad)}/u → reponer ${reponer}: *$${fp(costo)}*\n`;
+      }
+      lineas.push(linea);
+    };
+
+    agotados.forEach(agregarProducto);
+    criticos.forEach(agregarProducto);
+    alertaBaj.forEach(agregarProducto);
+
+    const enc = `📦 *INVENTARIO — ${catN}*\n` +
+      `_${productos.length} productos | ${bajos.length} bajo mínimo_\n` +
+      (agotados.length ? `🚨 *${agotados.length} AGOTADOS*\n` : '') +
+      (umbral.restock ? `_Mínimo recomendado: ${umbral.alerta} ${umbral.medida}_\n` : '') + `\n`;
+
+    const partes = [];
+    let parte = enc;
+    for (const l of lineas) {
+      if ((parte + l).length > 3500) { partes.push(parte); parte = `📦 _(continuación)_\n\n`; }
+      parte += l;
+    }
+
+    if (normales.length > 0) parte += `\n✅ *${normales.length} productos OK* (sobre el mínimo)\n`;
+    if (umbral.restock && totalRestock > 0) parte += `\n💰 *Inversión estimada: $${fp(totalRestock)}*\n`;
+    parte += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    partes.push(parte);
+
+    if (partes.length === 1) return partes[0];
+    return { tipo: 'mensajes', partes };
+  } catch(e) {
+    console.error('Error inventario categoría:', e.message);
+    return '❌ No pude consultar la categoría. Intenta de nuevo.';
+  }
+}
+
+// ──────────────────────────────────────────────
 // REPORTE RESTOCK — costo de reponer inventario bajo
 // ──────────────────────────────────────────────
 
@@ -1089,23 +1187,31 @@ async function reporteRestock() {
       return a.saldo - b.saldo;
     });
 
+    const fp = monitor.formatPesos;
     bajos.forEach(p => {
-      const nivel = p.saldo <= 0 ? '🚨' : p.saldo <= 5 ? '🔴' : '🟡';
-      let bloque = `${nivel} *${p.nombre}*\n`;
-      bloque += `   📦 Saldo actual: ${p.saldo} ${p.medida}\n`;
+      const cat = (p.categoria || '').toUpperCase();
+      const umbralKey = Object.keys(monitor.UMBRALES).find(k => cat.includes(k) || k.includes(cat));
+      const umbralCat = umbralKey ? monitor.UMBRALES[umbralKey] : null;
+      const limiteReponer = umbralCat?.alerta ||
+        (p.medida?.toLowerCase().includes('gr') ? 500 : 20);
+      const esRestock = umbralCat ? umbralCat.restock : true;
+      const nivelCritico = umbralCat?.critico || 5;
+
+      const nivel = p.saldo <= 0 ? '🚨' : p.saldo <= nivelCritico ? '🔴' : '🟡';
+      let bloque = `${nivel} *${p.nombre}*`;
+      if (p.categoria) bloque += ` _(${p.categoria})_`;
+      bloque += `\n   📦 Saldo: ${p.saldo} ${p.medida}\n`;
 
       if (p.costoUnidad > 0) {
-        bloque += `   💵 Costo unidad: $${p.costoUnidad.toLocaleString('es-CO')}\n`;
+        bloque += `   💵 Costo unidad: $${fp(p.costoUnidad)}\n`;
       }
-      if (p.costoTotal > 0) {
-        bloque += `   💰 Costo total stock: $${p.costoTotal.toLocaleString('es-CO')}\n`;
-      }
-      if (tieneCostos && p.costoUnidad > 0) {
-        const umbral = p.medida?.toLowerCase().includes('gr') || p.medida?.toLowerCase().includes('ml') ? 500 : 20;
-        const reponer = Math.max(0, umbral - p.saldo);
-        const costoReponer = reponer * p.costoUnidad;
+      if (tieneCostos && p.costoUnidad > 0 && esRestock) {
+        const reponer = Math.max(0, limiteReponer - p.saldo);
+        const costoReponer = Math.round(reponer * p.costoUnidad);
         totalRestock += costoReponer;
-        bloque += `   🛒 Reponer: ${reponer} ${p.medida} → *$${costoReponer.toLocaleString('es-CO')}*\n`;
+        bloque += `   🛒 Reponer: ${reponer} ${p.medida} → *$${fp(costoReponer)}*\n`;
+      } else if (!esRestock) {
+        bloque += `   ℹ️ Solo alerta (sin restock programado)\n`;
       }
       lineas.push(bloque);
     });
@@ -1123,7 +1229,7 @@ async function reporteRestock() {
 
     let pie = `\n`;
     if (tieneCostos && totalRestock > 0) {
-      pie += `💰 *INVERSIÓN TOTAL PARA RESTOCK: $${totalRestock.toLocaleString('es-CO')}*\n`;
+      pie += `💰 *INVERSIÓN TOTAL PARA RESTOCK: $${monitor.formatPesos(totalRestock)}*\n`;
       pie += `_Para reponer al mínimo recomendado_\n`;
     }
     pie += `─────────────────\n🤖 _VectorPOS — Chu_`;
