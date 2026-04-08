@@ -566,23 +566,34 @@ async function _obtenerCatalogoProductos() {
 }
 
 /**
- * Infiere la categoría de un producto a partir de su nombre,
+ * Infiere la categoría de un producto a partir de su nombre y medida,
  * cuando el catálogo del POS no provee esa información.
+ * - Si medida es gr/g/ml → ESENCIAS
+ * - Si medida es u/und/unidad → ORIGINALES (botella entera, no fraccionada)
+ * - Palabras clave específicas tienen prioridad sobre la medida
  */
-function _inferirCategoria(nombre) {
+function _inferirCategoria(nombre, medida = '') {
   const n = nombre.toLowerCase();
+  const m = medida.toLowerCase().trim();
+
+  // 1. Palabras clave explícitas (prioridad máxima)
   if (n.includes('original')) return 'ORIGINALES';
   if (n.includes(' 1.1') || n.endsWith('1.1')) return 'REPLICA 1.1';
   if (['crema','locion','loción','mantequilla','corporal','body'].some(k => n.includes(k))) return 'CREMA CORPORAL';
   if (['alcohol','gramera','insumo','tapón','tapon'].some(k => n.includes(k))) return 'INSUMOS VARIOS';
   const kwEnvase = [
-    'envase','tapa plana','singler','beirut','bomba','cartier','frasco',
+    'envase','tapa plana','tapa bala','singler','beirut','bomba','cartier','frasco',
     'botella','perfumero','maletín','maletin','star w','venecia','roma ',
     'paris ','london','empire','oval','redondo','cuadrado','roll on',
-    'rollon','atomizador','spray','dispensador',
+    'rollon','atomizador','dispensador',
   ];
   if (kwEnvase.some(kw => n.includes(kw))) return 'ENVASE';
-  return 'ESENCIAS'; // todo lo demás es esencia
+
+  // 2. Usar medida para distinguir esencias (gr/ml) de unidades (originales)
+  if (m === 'gr' || m === 'g' || m === 'ml' || m.startsWith('gr') || m.startsWith('ml')) return 'ESENCIAS';
+  if (m === 'u' || m === 'und' || m === 'unidad' || m === 'unidades' || m.startsWith('u')) return 'ORIGINALES';
+
+  return 'ESENCIAS'; // default
 }
 
 /** Retorna TODOS los productos del inventario cruzando saldos + catálogo */
@@ -627,7 +638,7 @@ async function consultarTodoInventario() {
       nombre,
       saldo,
       medida:      cat.medida    || p.Medida || '',
-      categoria:   cat.categoria || _inferirCategoria(nombre),
+      categoria:   cat.categoria || _inferirCategoria(nombre, cat.medida || p.Medida || ''),
       codigo:      p.Codigo || '',
       costoUnidad,
       costoTotal:  costoUnidad > 0 ? costoUnidad * saldo :
@@ -668,7 +679,7 @@ async function consultarAlertasInventario() {
 // Palabras clave por categoría para filtrar por nombre cuando no hay categoría asignada
 const KEYWORDS_CATEGORIA = {
   'ENVASE': [
-    'envase', 'tapa plana', 'singler', 'beirut', 'bomba', 'cartier',
+    'envase', 'tapa plana', 'tapa bala', 'singler', 'beirut', 'bomba', 'cartier',
     'frasco', 'botella', 'perfumero', 'maletín', 'maletin', 'star w', 'venecia',
     'roma ', 'paris ', 'london', 'empire', 'oval', 'redondo', 'cuadrado',
     'roll on', 'rollon', 'atomizador', 'spray', 'dispensador',
@@ -689,7 +700,7 @@ const KEYWORDS_CATEGORIA = {
 
 // Palabras clave que identifican envases/insumos/cremas (para excluirlos del match de esencias)
 const _NO_ESENCIA = [
-  'envase', 'tapa plana', 'singler', 'beirut', 'bomba', 'cartier', 'frasco', 'botella',
+  'envase', 'tapa plana', 'tapa bala', 'singler', 'beirut', 'bomba', 'cartier', 'frasco', 'botella',
   'perfumero', 'maletín', 'maletin', 'star w', 'venecia', 'roma ', 'paris ', 'london',
   'roll on', 'rollon', 'atomizador', 'spray', 'dispensador',
   'alcohol', 'gramera', 'crema', 'locion', 'loción', 'mantequilla',
