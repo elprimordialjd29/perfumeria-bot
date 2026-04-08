@@ -1072,13 +1072,20 @@ function mensajeMenu() {
     `5️⃣ Productos más/menos vendidos del mes\n` +
     `6️⃣ Medios de pago hoy\n` +
     `7️⃣ Quién trabajó hoy\n` +
-    `8️⃣ Ranking cajeros del mes\n` +
+    `8️⃣ Ranking cajeros del mes (con desglose por día)\n` +
     `9️⃣ Alertas de inventario\n` +
     `0️⃣ Ventas por rango de fechas\n` +
     `🇷 *R* — Crear requerimiento nuevo\n` +
     `🇻 *V* — Ver requerimientos\n` +
     `📊 *E* — Exportar reporte en Excel\n\n` +
-    `_También dime: gastos del mes, ventas por hora, o pregúntame sobre perfumes_ 😊`;
+    `💬 *También puedes preguntar:*\n` +
+    `• _"cuánto vendió Michelle hoy/esta semana/este mes"_\n` +
+    `• _"cuánto vendió Moisés el mes pasado"_\n` +
+    `• _"ventas de Laura del 1 al 7 de abril"_\n` +
+    `• _"cuánto queda de tapa plana 10ml"_\n` +
+    `• _"gastos del mes"_ · _"ventas por hora"_\n` +
+    `• _"ayer"_ · _"ayer y hoy"_ · _"antier a hoy"_\n` +
+    `• Cualquier pregunta sobre perfumes árabes 😊`;
 }
 
 module.exports = { procesarMensaje, activarEsperaEleccion, mensajeBienvenida, exportarExcelMes };
