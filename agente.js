@@ -41,7 +41,14 @@ Inventar datos confunde al dueño y destruye la confianza. Si no hay etiqueta di
 [RANKING_SEM]       → ranking cajeros semana
 [RANKING_MES]       → ranking cajeros mes
 [INVENTARIO]        → inventario general, stock total, alertas de productos bajos, qué falta
-[CRUCE_PRODUCTO:texto] → consulta cruzada ventas+inventario de UN producto o categoría específica. Extrae el término clave. Ej: "cuánto queda de tapa plana 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml] | "alcohol" → [CRUCE_PRODUCTO:alcohol] | "single color" → [CRUCE_PRODUCTO:singler color] | "originales" → [CRUCE_PRODUCTO:original] | "cuánto se vendió de Lattafa Asad y cuánto queda" → [CRUCE_PRODUCTO:lattafa asad] | "tapa plana 50ml" → [CRUCE_PRODUCTO:tapa plana 50ml]
+[VENTAS_INVENTARIO] → reporte completo ventas vs inventario de TODOS los productos: stock actual + vendido este mes, ordenado por más vendido
+[CRUCE_PRODUCTO:texto] → cruce ventas+inventario de UN producto este mes y hoy. Extrae el término clave. Ej: "cuánto queda de tapa plana 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml] | "single color" → [CRUCE_PRODUCTO:singler color] | "tapa plana 50ml vendido y stock" → [CRUCE_PRODUCTO:tapa plana 50ml]
+[CRUCE_PRODUCTO_RANGO:texto:YYYY-MM-DD:YYYY-MM-DD] → cuánto se vendió de un producto en un período específico + stock actual. Convierte fechas relativas a YYYY-MM-DD. Ej:
+  "cuánto se vendió de singler color ayer" → [CRUCE_PRODUCTO_RANGO:singler color:AYER:AYER]
+  "tapa plana 50ml la semana pasada" → [CRUCE_PRODUCTO_RANGO:tapa plana 50ml:LUNES:HOY]
+  "cuánto se vendió de lattafa el mes pasado" → [CRUCE_PRODUCTO_RANGO:lattafa:INICIO_MES_ANT:FIN_MES_ANT]
+  "singler color del 1 al 7 de abril" → [CRUCE_PRODUCTO_RANGO:singler color:2026-04-01:2026-04-07]
+  USA las variables HOY/AYER/ANTIER/LUNES/INICIO_MES_ANT/FIN_MES_ANT que el sistema reemplaza automáticamente.
 [CAJERO_HOY:nombre]              → cuánto vendió [nombre] hoy. Ej: "cuánto vendió Michelle hoy" → [CAJERO_HOY:michelle]
 [CAJERO_SEM:nombre]              → cuánto vendió [nombre] esta semana. Ej: "cuánto vendió Moisés esta semana" → [CAJERO_SEM:moises]
 [CAJERO_MES:nombre]              → cuánto vendió [nombre] este mes. Ej: "ventas de Laura este mes" → [CAJERO_MES:laura]
@@ -68,12 +75,17 @@ Responde directamente SOLO para:
 
 ━━━ EJEMPLOS CORRECTOS ━━━
 "qué perfumes tenemos en inventario" → [INVENTARIO]
+"ventas vs inventario de todo" → [VENTAS_INVENTARIO]
 "cuántas unidades de Lattafa quedan" → [CRUCE_PRODUCTO:lattafa]
 "tapa plana de 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml]
 "single color" → [CRUCE_PRODUCTO:singler color]
 "cuánto alcohol queda" → [CRUCE_PRODUCTO:alcohol]
 "originales cuántos quedan y cuántos se vendieron" → [CRUCE_PRODUCTO:original]
 "tapa plana 50ml vendido y stock" → [CRUCE_PRODUCTO:tapa plana 50ml]
+"cuánto se vendió de singler color ayer" → [CRUCE_PRODUCTO_RANGO:singler color:AYER:AYER]
+"cuánto se vendió de tapa plana 50ml la semana pasada" → [CRUCE_PRODUCTO_RANGO:tapa plana 50ml:LUNES:HOY]
+"lattafa el mes pasado" → [CRUCE_PRODUCTO_RANGO:lattafa:INICIO_MES_ANT:FIN_MES_ANT]
+"singler color esta semana" → [CRUCE_PRODUCTO_RANGO:singler color:LUNES:HOY]
 "qué se vendió más este mes" → [PRODUCTOS_MES]
 "ventas de hoy" → [REPORTE_HOY]
 "gastos del mes" → [GASTOS]
@@ -370,6 +382,27 @@ async function ejecutarAccion(raw) {
       const match = raw.match(/\[CAJERO_RANGO:([^:]+):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})\]/);
       if (match) return await reporteCajeroIndividual(match[1].trim(), match[2], match[3], `${match[2]} → ${match[3]}`);
       return '📅 No entendí el rango. Ejemplo: _"ventas de Michelle del 1 al 7 de abril"_';
+    }
+
+    if (raw.startsWith('[VENTAS_INVENTARIO]')) {
+      return await reporteVentasVsInventario();
+    }
+
+    if (raw.startsWith('[CRUCE_PRODUCTO_RANGO:')) {
+      const match = raw.match(/\[CRUCE_PRODUCTO_RANGO:([^:]+):([^:\]]+):([^\]]+)\]/);
+      if (!match) return '❌ No entendí el producto o las fechas.';
+      const query  = match[1].trim();
+      const r = fechasRelativas();
+      const hoy = new Date();
+      const primerDiaMesAnt = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1).toISOString().split('T')[0];
+      const ultimoDiaMesAnt = new Date(hoy.getFullYear(), hoy.getMonth(), 0).toISOString().split('T')[0];
+      const resolver = s => s
+        .replace('HOY', r.hoy).replace('AYER', r.ayer).replace('ANTIER', r.antier)
+        .replace('LUNES', r.lunes)
+        .replace('INICIO_MES_ANT', primerDiaMesAnt).replace('FIN_MES_ANT', ultimoDiaMesAnt);
+      const desde = resolver(match[2].trim());
+      const hasta = resolver(match[3].trim());
+      return await cruzarProductoRango(query, desde, hasta);
     }
 
     if (raw.startsWith('[CRUCE_PRODUCTO:')) {
@@ -893,6 +926,124 @@ async function reporteVentasPorHora(desde, hasta, titulo) {
 }
 
 // ──────────────────────────────────────────────
+// REPORTE COMPLETO: VENTAS VS INVENTARIO
+// ──────────────────────────────────────────────
+
+async function reporteVentasVsInventario() {
+  try {
+    const inventario = await monitor.consultarTodoInventario() || [];
+    const { browser, page } = await monitor.crearSesionPOS();
+    const ventasMes = await monitor.extraerVentasProducto(page, monitor.fechaInicioMes(), monitor.fechaHoy());
+    await browser.close();
+
+    // Unificar inventario + ventas
+    const mapa = {};
+    inventario.forEach(p => {
+      mapa[p.nombre] = { nombre: p.nombre, stock: p.saldo, medida: p.medida || '', vendidoMes: 0, valorMes: 0 };
+    });
+    ventasMes.forEach(p => {
+      if (!mapa[p.nombre]) mapa[p.nombre] = { nombre: p.nombre, stock: null, medida: '', vendidoMes: 0, valorMes: 0 };
+      mapa[p.nombre].vendidoMes = p.cantidad;
+      mapa[p.nombre].valorMes   = p.valor;
+    });
+
+    const items = Object.values(mapa)
+      .filter(i => i.vendidoMes > 0 || (i.stock !== null && i.stock > 0))
+      .sort((a, b) => b.vendidoMes - a.vendidoMes);
+
+    if (!items.length) return '📦 Sin datos de productos para este período.';
+
+    const totalVendido = items.reduce((s, i) => s + i.valorMes, 0);
+    const mes = new Date().toLocaleString('es-CO', { month: 'long', year: 'numeric' });
+
+    let msg = `📦 *VENTAS VS INVENTARIO — ${mes.toUpperCase()}*\n`;
+    msg += `_${monitor.fechaInicioMes()} → ${monitor.fechaHoy()}_\n\n`;
+
+    // Mostrar top 20 para no saturar el chat
+    const mostrar = items.slice(0, 20);
+    mostrar.forEach(item => {
+      const nivelStock = item.stock === null ? '❔' :
+        item.stock <= 0  ? '🚨' : item.stock <= 5 ? '🔴' : item.stock <= 20 ? '🟡' : '🟢';
+      msg += `▪️ *${item.nombre}*\n`;
+      msg += `   📈 Vendido: ${item.vendidoMes} uds`;
+      if (item.valorMes > 0) msg += ` — $${item.valorMes.toLocaleString('es-CO')}`;
+      msg += `\n`;
+      if (item.stock !== null) {
+        msg += `   ${nivelStock} Stock: ${item.stock} ${item.medida}\n`;
+      }
+    });
+
+    if (items.length > 20) msg += `\n_...y ${items.length - 20} productos más_\n`;
+    msg += `\n💰 *Total vendido: $${totalVendido.toLocaleString('es-CO')}*\n`;
+    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch(e) {
+    console.error('Error ventas vs inventario:', e.message);
+    return '❌ No pude generar el reporte. Intenta de nuevo.';
+  }
+}
+
+// ──────────────────────────────────────────────
+// CRUCE PRODUCTO EN RANGO DE FECHAS
+// ──────────────────────────────────────────────
+
+async function cruzarProductoRango(query, desde, hasta) {
+  const palabras = query.toLowerCase().trim().split(/\s+/).filter(p => p.length > 1);
+  function coincide(nombre) {
+    const n = nombre.toLowerCase();
+    return palabras.every(p => n.includes(p));
+  }
+
+  try {
+    const inventario = await monitor.consultarTodoInventario() || [];
+    const { browser, page } = await monitor.crearSesionPOS();
+    const ventasRango = await monitor.extraerVentasProducto(page, desde, hasta);
+    await browser.close();
+
+    const invFiltrado    = inventario.filter(p => coincide(p.nombre));
+    const ventasFiltrado = ventasRango.filter(p => coincide(p.nombre));
+
+    if (!invFiltrado.length && !ventasFiltrado.length) {
+      return `🔍 No encontré _"${query}"_ en inventario ni en ventas del período.\n\nIntenta con un término más corto.`;
+    }
+
+    const mapa = {};
+    invFiltrado.forEach(p => {
+      mapa[p.nombre] = { nombre: p.nombre, stock: p.saldo, medida: p.medida || '', vendido: 0, valor: 0 };
+    });
+    ventasFiltrado.forEach(p => {
+      if (!mapa[p.nombre]) mapa[p.nombre] = { nombre: p.nombre, stock: null, medida: '', vendido: 0, valor: 0 };
+      mapa[p.nombre].vendido = p.cantidad;
+      mapa[p.nombre].valor   = p.valor;
+    });
+
+    const items = Object.values(mapa).sort((a, b) => b.vendido - a.vendido);
+    const numDias = Math.max(1, Math.round((new Date(hasta) - new Date(desde)) / 86400000) + 1);
+    const labelPeriodo = numDias === 1 ? desde :
+      numDias <= 7 ? `semana (${desde} → ${hasta})` :
+      numDias <= 15 ? `quincena (${desde} → ${hasta})` : `${desde} → ${hasta}`;
+
+    let msg = `🔍 *"${query.toUpperCase()}" — ${labelPeriodo.toUpperCase()}*\n\n`;
+
+    items.forEach(item => {
+      const nivelStock = item.stock === null ? '' :
+        item.stock <= 0 ? ' 🚨 AGOTADO' : item.stock <= 5 ? ' 🔴' : item.stock <= 20 ? ' 🟡' : ' 🟢';
+      msg += `📦 *${item.nombre}*\n`;
+      if (item.vendido > 0) msg += `   📈 Vendido: ${item.vendido} uds — $${item.valor.toLocaleString('es-CO')}\n`;
+      else                  msg += `   📈 Sin ventas en este período\n`;
+      if (item.stock !== null) msg += `   📦 Stock actual: *${item.stock} ${item.medida}*${nivelStock}\n`;
+      msg += '\n';
+    });
+
+    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch(e) {
+    console.error('Error cruce producto rango:', e.message);
+    return '❌ No pude consultar los datos. Intenta de nuevo.';
+  }
+}
+
+// ──────────────────────────────────────────────
 // CRUCE VENTAS + INVENTARIO por producto/categoría
 // ──────────────────────────────────────────────
 
@@ -1140,6 +1291,8 @@ function mensajeMenu() {
     `• _"cuánto vendió Michelle hoy/esta semana/este mes"_\n` +
     `• _"cuánto vendió Moisés el mes pasado"_\n` +
     `• _"ventas de Laura del 1 al 7 de abril"_\n` +
+    `• _"ventas vs inventario"_ (reporte completo todos los productos)\n` +
+    `• _"cuánto se vendió de singler color ayer/esta semana/el mes pasado"_\n` +
     `• _"cuánto queda de tapa plana 10ml"_\n` +
     `• _"gastos del mes"_ · _"ventas por hora"_\n` +
     `• _"ayer"_ · _"ayer y hoy"_ · _"antier a hoy"_\n` +
