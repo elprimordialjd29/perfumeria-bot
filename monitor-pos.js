@@ -192,10 +192,11 @@ async function monitorearVentasDiarias() {
     const { browser: b, page } = await crearBrowserLogueado();
     browser = b;
 
-    // Datos de hoy
-    const ventasHoy = await extraerVentasGenerales(page, hoy, hoy);
-    const totalHoy = ventasHoy.reduce((s, v) => s + v.totalVentas, 0);
-    const ticketsHoy = ventasHoy.reduce((s, v) => s + v.tickets, 0);
+    // Datos de hoy — usamos cajeros como fuente principal (ventas/general
+    // puede retornar vacío para rangos cortos por formato de fecha en VectorPOS)
+    const cajerosHoy = await extraerVentasCajero(page, hoy, hoy);
+    const totalHoy   = cajerosHoy.reduce((s, c) => s + c.total,   0);
+    const ticketsHoy = cajerosHoy.reduce((s, c) => s + c.tickets, 0);
     console.log(`✅ Hoy: $${totalHoy.toLocaleString('es-CO')} | ${ticketsHoy} tickets`);
 
     // Guardar en Supabase
@@ -204,7 +205,7 @@ async function monitorearVentasDiarias() {
         fecha: hoy,
         total_dia: totalHoy,
         num_transacciones: ticketsHoy,
-        raw_data: { ventasHoy },
+        raw_data: { cajerosHoy },
       });
     }
 

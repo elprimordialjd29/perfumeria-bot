@@ -337,12 +337,19 @@ async function reporteRango(desde, hasta, titulo) {
   const tituloFinal = titulo || `${desde} al ${hasta}`;
   try {
     const { browser, page } = await monitor.crearSesionPOS();
-    const ventas = await monitor.extraerVentasGenerales(page, desde, hasta);
+    const ventas  = await monitor.extraerVentasGenerales(page, desde, hasta);
     const cajeros = await monitor.extraerVentasCajero(page, desde, hasta);
     await browser.close();
 
-    const total = ventas.reduce((s, v) => s + v.totalVentas, 0);
-    const tickets = ventas.reduce((s, v) => s + v.tickets, 0);
+    // extraerVentasGenerales puede retornar 0 para rangos cortos por formato de fecha;
+    // usamos cajeros como fuente principal de total/tickets (siempre confiable)
+    const totalDeCajeros  = cajeros.reduce((s, c) => s + c.total, 0);
+    const ticketsDeCajeros = cajeros.reduce((s, c) => s + c.tickets, 0);
+    const totalDeVentas   = ventas.reduce((s, v) => s + v.totalVentas, 0);
+    const ticketsDeVentas = ventas.reduce((s, v) => s + v.tickets, 0);
+
+    const total   = totalDeCajeros   > 0 ? totalDeCajeros   : totalDeVentas;
+    const tickets = ticketsDeCajeros > 0 ? ticketsDeCajeros : ticketsDeVentas;
     const medallas = ['🥇', '🥈', '🥉'];
 
     let msg = `📊 *REPORTE — ${tituloFinal}*\n`;
