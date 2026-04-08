@@ -42,7 +42,16 @@ Inventar datos confunde al dueño y destruye la confianza. Si no hay etiqueta di
 [RANKING_SEM]       → ranking cajeros semana
 [RANKING_MES]       → ranking cajeros mes
 [INVENTARIO]        → inventario general, stock total, alertas de productos bajos (SIN costos)
-[INVENTARIO_CAT:categoria] → stock e inventario bajo de UNA categoría. Ej: "qué falta de ENVASE" → [INVENTARIO_CAT:ENVASE] | "esencias masculinas" → [INVENTARIO_CAT:ESENCIAS M] | "réplicas bajas" → [INVENTARIO_CAT:REPLICA 1.1] | "insumos" → [INVENTARIO_CAT:INSUMOS VARIOS] | "qué falta de esencias" → [INVENTARIO_CAT:ESENCIAS] | "originales" → [INVENTARIO_CAT:ORIGINALES] | "cremas" → [INVENTARIO_CAT:CREMA CORPORAL]
+[INVENTARIO_CAT:categoria] → stock e inventario bajo de UNA categoría. Mapeo EXACTO:
+  "esencias" / "todas las esencias" / "esencias juntas" → [INVENTARIO_CAT:ESENCIAS]
+  "esencias masculinas" / "masculinas" / "hombre" → [INVENTARIO_CAT:ESENCIAS M]
+  "esencias femeninas" / "femeninas" / "mujer" → [INVENTARIO_CAT:ESENCIAS F]
+  "esencias unisex" / "unisex" → [INVENTARIO_CAT:ESENCIAS U]
+  "réplicas" / "replicas" / "1.1" → [INVENTARIO_CAT:REPLICA 1.1]
+  "originales" → [INVENTARIO_CAT:ORIGINALES]
+  "envases" / "envase" → [INVENTARIO_CAT:ENVASE]
+  "insumos" / "alcohol" / "insumos varios" → [INVENTARIO_CAT:INSUMOS VARIOS]
+  "cremas" / "crema corporal" → [INVENTARIO_CAT:CREMA CORPORAL]
 [RESTOCK]           → costo de restock, cuánto costaría reponer el inventario bajo, qué falta y cuánto cuesta, inversión para restock
 [VENTAS_INVENTARIO] → reporte completo ventas vs inventario de TODOS los productos: stock actual + vendido este mes, ordenado por más vendido
 [CRUCE_PRODUCTO:texto] → cruce ventas+inventario de UN producto este mes y hoy. Extrae el término clave. Ej: "cuánto queda de tapa plana 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml] | "single color" → [CRUCE_PRODUCTO:singler color] | "tapa plana 50ml vendido y stock" → [CRUCE_PRODUCTO:tapa plana 50ml]

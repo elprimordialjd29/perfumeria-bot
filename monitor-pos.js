@@ -647,7 +647,7 @@ async function consultarAlertasInventario() {
 // Palabras clave por categoría para filtrar por nombre cuando no hay categoría asignada
 const KEYWORDS_CATEGORIA = {
   'ENVASE': [
-    'envase', 'tapa plana', 'singler', 'singler color', 'beirut', 'bomba', 'cartier',
+    'envase', 'tapa plana', 'singler', 'beirut', 'bomba', 'cartier',
     'frasco', 'botella', 'perfumero', 'maletín', 'maletin', 'star w', 'venecia',
     'roma ', 'paris ', 'london', 'empire', 'oval', 'redondo', 'cuadrado',
     'roll on', 'rollon', 'atomizador', 'spray', 'dispensador',
@@ -658,12 +658,28 @@ const KEYWORDS_CATEGORIA = {
     'caja', 'bolsa', 'papel', 'cinta', 'precinto', 'tubo', 'pipeta',
   ],
   'CREMA CORPORAL': ['crema', 'loción', 'locion', 'mantequilla', 'corporal', 'body'],
-  'ESENCIAS M':     [],  // sin keywords — depende de categoría
-  'ESENCIAS F':     [],
-  'ESENCIAS U':     [],
-  'REPLICA 1.1':    ['1.1', 'replica', 'réplica'],
-  'ORIGINALES':     ['original'],
+  // Esencias: cuando no hay categoría, todo lo que NO sea envase/insumo/crema/original es esencia
+  'ESENCIAS M':  ['_ESENCIA_'],
+  'ESENCIAS F':  ['_ESENCIA_'],
+  'ESENCIAS U':  ['_ESENCIA_'],
+  'ESENCIAS':    ['_ESENCIA_'],
+  'REPLICA 1.1': ['1.1', ' 1.1'],
+  'ORIGINALES':  ['original'],
 };
+
+// Palabras clave que identifican envases/insumos/cremas (para excluirlos del match de esencias)
+const _NO_ESENCIA = [
+  'envase', 'tapa plana', 'singler', 'beirut', 'bomba', 'cartier', 'frasco', 'botella',
+  'perfumero', 'maletín', 'maletin', 'star w', 'venecia', 'roma ', 'paris ', 'london',
+  'roll on', 'rollon', 'atomizador', 'spray', '5ml', '10ml', '15ml', '20ml', '30ml',
+  '50ml', '60ml', '100ml', 'alcohol', 'gramera', 'crema', 'locion', 'loción', 'mantequilla',
+  'corporal', 'caja', 'bolsa', 'etiqueta', 'original',
+];
+
+function _esEsencia(nombre) {
+  const n = nombre.toLowerCase();
+  return !_NO_ESENCIA.some(kw => n.includes(kw));
+}
 
 /** Filtra inventario por categoría específica */
 async function consultarInventarioPorCategoria(categoria) {
@@ -671,26 +687,30 @@ async function consultarInventarioPorCategoria(categoria) {
   if (!inv) return null;
   const catN = categoria.toUpperCase().trim();
 
-  // Log para diagnóstico
   const conCategoria = inv.filter(p => p.categoria).length;
   console.log(`🔍 Filtrar por "${catN}" | ${inv.length} productos | ${conCategoria} con categoría`);
 
   const resultado = inv.filter(p => {
     const cat = (p.categoria || '').toUpperCase().trim();
+    const nombre = p.nombre.toLowerCase();
 
-    // Match directo por categoría si está disponible
+    // ── Con categoría asignada: match directo ──
     if (cat) {
-      // "ESENCIAS" debe coincidir con ESENCIAS M, ESENCIAS F, ESENCIAS U
       if (catN === 'ESENCIAS') return cat.startsWith('ESENCIAS');
-      return cat === catN || cat.startsWith(catN) || catN.startsWith(cat);
+      return cat === catN || cat.startsWith(catN);
     }
 
-    // Fallback: buscar por palabras clave en el nombre del producto
-    const keywords = KEYWORDS_CATEGORIA[catN] ||
-      Object.entries(KEYWORDS_CATEGORIA).find(([k]) => catN.startsWith(k) || k.startsWith(catN))?.[1];
-    if (!keywords) return false;
-    const nombre = p.nombre.toLowerCase();
-    return keywords.some(kw => nombre.includes(kw));
+    // ── Sin categoría: fallback por nombre ──
+    if (catN === 'ESENCIAS') return _esEsencia(p.nombre);
+    if (catN === 'ESENCIAS M' || catN === 'ESENCIAS F' || catN === 'ESENCIAS U') return _esEsencia(p.nombre);
+    if (catN === 'REPLICA 1.1') return nombre.includes('1.1');
+    if (catN === 'ORIGINALES') return nombre.includes('original');
+    if (catN === 'CREMA CORPORAL') return ['crema','locion','loción','mantequilla','corporal','body'].some(k => nombre.includes(k));
+    if (catN === 'INSUMOS VARIOS') return ['alcohol','gramera','insumo','tapón','tapon','caja','bolsa'].some(k => nombre.includes(k));
+    if (catN === 'ENVASE') {
+      return KEYWORDS_CATEGORIA['ENVASE'].some(kw => nombre.includes(kw.trim()));
+    }
+    return false;
   });
 
   console.log(`✅ ${resultado.length} productos encontrados en "${catN}"`);
