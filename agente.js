@@ -193,12 +193,16 @@ function detectarFechaRelativa(texto) {
 
   // Patrones relativos simples
   const patrones = [
-    [/^(ventas\s+(de\s+)?)?ayer(\s+nada\s+m[aá]s)?$/, r.ayer, r.ayer],
-    [/(ventas\s+(del?\s+)?)?ayer\s+y\s+hoy/,          r.ayer, r.hoy],
-    [/(ventas\s+(del?\s+)?)?ayer\s+(a|hasta|y)\s+hoy/, r.ayer, r.hoy],
-    [/^(ventas\s+(de\s+)?)?antier$/, r.antier, r.antier],
+    // ayer (con o sin "ventas", "reporte", "de")
+    [/^(reporte\s+)?(ventas?\s+)?(de\s+|del?\s+)?ayer(\s+nada\s+m[aá]s)?$/, r.ayer, r.ayer],
+    [/(ventas?\s+)?(del?\s+)?ayer\s+y\s+hoy/,           r.ayer, r.hoy],
+    [/(ventas?\s+)?(del?\s+)?ayer\s+(a|hasta|y)\s+hoy/, r.ayer, r.hoy],
+    // antier
+    [/^(reporte\s+)?(ventas?\s+)?(de\s+)?antier$/, r.antier, r.antier],
     [/antier\s+(a|hasta|y)\s+hoy/,   r.antier, r.hoy],
     [/antier\s+(a|hasta|y)\s+ayer/,  r.antier, r.ayer],
+    // hoy explícito
+    [/^(reporte\s+)?(ventas?\s+)?(de\s+)?hoy$/, r.hoy, r.hoy],
   ];
 
   for (const [regex, desde, hasta] of patrones) {
@@ -310,7 +314,15 @@ async function procesarMensaje(texto, esAdmin = true) {
   }
 }
 
-async function ejecutarAccion(raw) {
+async function ejecutarAccion(rawOriginal) {
+    // Normalizar: si Claude omitió los corchetes, agregarlos
+    let raw = rawOriginal.trim();
+    if (!raw.startsWith('[')) {
+      // Buscar si empieza con un tag conocido sin corchetes
+      const tagMatch = raw.match(/^(REPORTE_RANGO|REPORTE_HOY|REPORTE_MES|REPORTE_SEMANA|REPORTE_MES_ANT|REPORTE_GENERAL|INVENTARIO_CAT|INVENTARIO|RESTOCK|VENTAS_INVENTARIO|CRUCE_PRODUCTO_RANGO|CRUCE_PRODUCTO|CAJERO_HOY|CAJERO_SEM|CAJERO_MES|CAJERO_MES_ANT|CAJERO_RANGO|PRODUCTOS_MES|PRODUCTOS_HOY|MEDIOS_PAGO_HOY|MEDIOS_PAGO_MES|QUIEN_TRABAJO|RANKING_HOY|RANKING_SEM|RANKING_MES|GASTOS|CAJA|VENTAS_HORA|REQUERIMIENTO|VER_REQS|EXPORTAR_EXCEL|AGREGAR_USUARIO|VER_USUARIOS|QUITAR_USUARIO|MENU|AYUDA)[:|\]]/);
+      if (tagMatch) raw = '[' + raw + (raw.includes(']') ? '' : ']');
+    }
+
     if (raw.startsWith('[REPORTE_GENERAL]')) {
       return await reporteGeneral();
     }
