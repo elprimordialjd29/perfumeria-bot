@@ -1062,26 +1062,68 @@ async function reporteGastos(desde, hasta, titulo) {
 
 async function reporteCierresCaja(desde, hasta) {
   try {
+    const hoy = monitor.fechaHoy();
+    const fp = monitor.formatPesos;
+    const meta = parseInt(process.env.META_MENSUAL) || 10000000;
+    const diasEnMes = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+    const metaDiaria = Math.round(meta / diasEnMes);
+
+    // Sesión única para cierres + ventas de hoy
     const { browser, page } = await monitor.crearSesionPOS();
-    const cierres = await monitor.extraerCierresCaja(page, desde, hasta);
+    const [cierres, cajerosHoy] = await Promise.all([
+      monitor.extraerCierresCaja(page, desde, hasta),
+      monitor.extraerVentasCajero(page, hoy, hoy),
+    ]);
     await browser.close();
 
-    if (!cierres.length) return `🏧 Sin cierres de caja registrados para este período.`;
+    let msg = `🏧 *MOVIMIENTO DE CAJA*\n\n`;
 
-    let msg = `🏧 *CIERRES DE CAJA*\n`;
-    msg += `_${desde} → ${hasta}_\n\n`;
+    // ── Sesión activa hoy ──
+    const activos = cajerosHoy.filter(c => c.tickets > 0);
+    if (activos.length > 0) {
+      const totalHoy = activos.reduce((s, c) => s + c.total, 0);
+      const efectivoHoy = activos.reduce((s, c) => s + (c.efectivo || 0), 0);
+      const bancoHoy = activos.reduce((s, c) => s + (c.bancolombia || 0), 0);
+      const nequiHoy = activos.reduce((s, c) => s + (c.nequi || 0), 0);
+      const faltaMeta = Math.max(0, metaDiaria - totalHoy);
+      const pct = Math.min(100, Math.round((totalHoy / metaDiaria) * 100));
+      const barra = Math.min(Math.round(pct / 10), 10);
+      const progreso = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
 
-    cierres.forEach(c => {
-      msg += `📅 *${c.fecha}*\n`;
-      if (c.turnos) msg += `   ${c.turnos.substring(0, 120)}\n`;
-      msg += '\n';
-    });
+      msg += `📅 *HOY — ${hoy}*\n`;
+      activos.forEach(c => {
+        msg += `👤 *${c.cajero}* | 🎫 ${c.tickets} tickets\n`;
+      });
+      msg += `\n💰 *Vendido hoy: $${fp(totalHoy)}*\n`;
+      if (efectivoHoy > 0)  msg += `   💵 Efectivo: $${fp(efectivoHoy)}\n`;
+      if (bancoHoy > 0)     msg += `   🏦 Bancolombia: $${fp(bancoHoy)}\n`;
+      if (nequiHoy > 0)     msg += `   📱 Nequi: $${fp(nequiHoy)}\n`;
+
+      msg += `\n🎯 *Meta del día: $${fp(metaDiaria)}*\n`;
+      msg += `${progreso} ${pct}%\n`;
+      if (faltaMeta > 0) {
+        msg += `📉 Falta: *$${fp(faltaMeta)}*\n`;
+      } else {
+        msg += `🏆 *¡Meta del día cumplida!*\n`;
+      }
+      msg += `\n`;
+    }
+
+    // ── Cierres recientes (últimos 7 días) ──
+    if (cierres.length > 0) {
+      msg += `─────────────────\n`;
+      msg += `📋 *Turnos recientes:*\n`;
+      cierres.slice(-7).forEach(c => {
+        msg += `📅 *${c.fecha}*\n`;
+        if (c.turnos) msg += `   ${c.turnos.substring(0, 100)}\n`;
+      });
+    }
 
     msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
     return msg;
   } catch (e) {
     console.error('Error cierres:', e.message);
-    return '❌ No pude consultar los cierres de caja.';
+    return '❌ No pude consultar el movimiento de caja.';
   }
 }
 
