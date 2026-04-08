@@ -4,7 +4,6 @@
  */
 
 require('dotenv').config();
-const Anthropic = require('@anthropic-ai/sdk');
 const Groq = require('groq-sdk');
 const monitor = require('./monitor-pos');
 const db = require('./database');
@@ -12,7 +11,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const historial = [];
@@ -306,21 +304,23 @@ async function procesarMensaje(texto, esAdmin = true) {
 
     const restriccion = esAdmin ? '' : '\n\nNOTA: Este usuario NO es el administrador. NO uses etiquetas de administración: [AGREGAR_USUARIO], [VER_USUARIOS], [QUITAR_USUARIO], [REQUERIMIENTO], [VER_REQS], [EXPORTAR_EXCEL].';
 
-    const resp = await claude.messages.create({
-      model: 'claude-haiku-4-5',
+    const resp = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
       max_tokens: 500,
-      system: SYSTEM_PROMPT + contextoFechas + restriccion,
-      messages: historial,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT + contextoFechas + restriccion },
+        ...historial,
+      ],
     });
 
-    const raw = resp.content[0].text.trim();
+    const raw = resp.choices[0].message.content.trim();
     historial.push({ role: 'assistant', content: raw });
 
     return await ejecutarAccion(raw);
 
   } catch (e) {
     if (e?.status === 429) return '⏳ Demasiadas consultas. Espera unos segundos.';
-    console.error('Error Claude:', e?.message);
+    console.error('Error Groq:', e?.message);
     return '❌ Error procesando tu mensaje. Intenta de nuevo.';
   }
 }
