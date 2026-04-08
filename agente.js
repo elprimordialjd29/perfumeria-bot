@@ -4,14 +4,14 @@
  */
 
 require('dotenv').config();
-const Groq = require('groq-sdk');
+const Anthropic = require('@anthropic-ai/sdk');
 const monitor = require('./monitor-pos');
 const db = require('./database');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const historial = [];
 
@@ -222,21 +222,21 @@ async function procesarMensaje(texto) {
     const r = fechasRelativas();
     const contextoFechas = `\n\nCONTEXTO ACTUAL: Hoy es ${r.hoy} (${new Date().toLocaleDateString('es-CO',{weekday:'long'})}). Ayer fue ${r.ayer}. Antier fue ${r.antier}. Esta semana va del lunes ${r.lunes} al ${r.hoy}.`;
 
-    const resp = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'system', content: SYSTEM_PROMPT + contextoFechas }, ...historial],
+    const resp = await claude.messages.create({
+      model: 'claude-haiku-4-5',
       max_tokens: 500,
-      temperature: 0.5,
+      system: SYSTEM_PROMPT + contextoFechas,
+      messages: historial,
     });
 
-    const raw = resp.choices[0].message.content.trim();
+    const raw = resp.content[0].text.trim();
     historial.push({ role: 'assistant', content: raw });
 
     return await ejecutarAccion(raw);
 
   } catch (e) {
     if (e?.status === 429) return '⏳ Demasiadas consultas. Espera unos segundos.';
-    console.error('Error Groq:', e?.message);
+    console.error('Error Claude:', e?.message);
     return '❌ Error procesando tu mensaje. Intenta de nuevo.';
   }
 }

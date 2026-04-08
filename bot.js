@@ -20,7 +20,7 @@ const fs = require('fs');
 // ──────────────────────────────────────────────
 
 const errores = [];
-if (!process.env.GROQ_API_KEY)     errores.push('GROQ_API_KEY');
+if (!process.env.ANTHROPIC_API_KEY) errores.push('ANTHROPIC_API_KEY');
 if (!process.env.SUPABASE_URL)     errores.push('SUPABASE_URL');
 if (!process.env.SUPABASE_KEY)     errores.push('SUPABASE_KEY');
 if (!process.env.VECTORPOS_USER)   errores.push('VECTORPOS_USER');
