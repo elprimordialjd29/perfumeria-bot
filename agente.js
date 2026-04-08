@@ -419,20 +419,47 @@ async function ejecutarAccion(raw) {
 // HELPER: BLOQUE DE META
 // ──────────────────────────────────────────────
 
-function bloquesMeta(total) {
+function bloquesMeta(total, desde, hasta) {
   const meta = parseInt(process.env.META_MENSUAL) || 10000000;
-  const pct  = ((total / meta) * 100).toFixed(1);
-  const faltante = meta - total;
-  const barra = Math.round(pct / 10);
-  const progreso = '🟩'.repeat(Math.min(barra, 10)) + '⬜'.repeat(Math.max(10 - barra, 0));
 
-  let bloque = `\n🎯 *META MENSUAL: $${meta.toLocaleString('es-CO')}*\n`;
+  // Calcular días del período
+  const dDesde = new Date((desde || new Date().toISOString().split('T')[0]) + 'T12:00:00');
+  const dHasta = new Date((hasta  || new Date().toISOString().split('T')[0]) + 'T12:00:00');
+  const numDias = Math.max(1, Math.round((dHasta - dDesde) / 86400000) + 1);
+
+  // Días del mes de referencia (para la proporción)
+  const diasEnMes = new Date(dDesde.getFullYear(), dDesde.getMonth() + 1, 0).getDate();
+
+  // Meta proporcional al período
+  const metaDiaria  = Math.round(meta / diasEnMes);
+  const metaPeriodo = Math.round(metaDiaria * numDias);
+
+  const pct      = ((total / metaPeriodo) * 100).toFixed(1);
+  const faltante = metaPeriodo - total;
+  const promDiarioLogrado   = Math.round(total / numDias);
+  const barra    = Math.min(Math.round(Number(pct) / 10), 10);
+  const progreso = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
+
+  const labelPeriodo =
+    numDias === 1  ? 'DÍA' :
+    numDias <= 7   ? 'SEMANA' :
+    numDias <= 15  ? 'QUINCENA' :
+    numDias <= 22  ? `${numDias} DÍAS` : 'MES';
+
+  let bloque = `\n🎯 *META ${labelPeriodo}: $${metaPeriodo.toLocaleString('es-CO')}*`;
+  bloque += ` _(${numDias} día${numDias > 1 ? 's' : ''} × $${metaDiaria.toLocaleString('es-CO')}/día)_\n`;
   bloque += `${progreso} ${pct}%\n`;
+
   if (faltante > 0) {
-    bloque += `📉 Faltó: $${faltante.toLocaleString('es-CO')} para la meta\n`;
+    bloque += `📉 Faltó: *$${faltante.toLocaleString('es-CO')}*\n`;
   } else {
-    bloque += `🏆 ¡Meta cumplida! Superó por $${Math.abs(faltante).toLocaleString('es-CO')}\n`;
+    bloque += `🏆 ¡Meta cumplida! +$${Math.abs(faltante).toLocaleString('es-CO')}\n`;
   }
+
+  if (numDias > 1) {
+    bloque += `📊 Promedio diario logrado: $${promDiarioLogrado.toLocaleString('es-CO')} | Necesario: $${metaDiaria.toLocaleString('es-CO')}\n`;
+  }
+
   return bloque;
 }
 
@@ -495,7 +522,7 @@ async function reporteRango(desde, hasta, titulo) {
       });
     }
 
-    msg += bloquesMeta(total);
+    msg += bloquesMeta(total, desde, hasta);
     msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
     return msg;
   } catch (e) {
@@ -535,7 +562,7 @@ async function reporteCajeroIndividual(nombre, desde, hasta, titulo) {
     if (encontrado.bancolombia > 0) msg += `\n🏦 Bancolombia: $${encontrado.bancolombia.toLocaleString('es-CO')}`;
     if (encontrado.nequi > 0)       msg += `\n📱 Nequi: $${encontrado.nequi.toLocaleString('es-CO')}`;
     msg += `\n`;
-    msg += bloquesMeta(totalPeriodo);
+    msg += bloquesMeta(totalPeriodo, desde, hasta);
     msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
     return msg;
   } catch (e) {
@@ -598,7 +625,7 @@ async function reporteRankingPOS(desde, hasta, titulo) {
     });
 
     msg += `💵 *Total: $${totalGeneral.toLocaleString('es-CO')}*\n`;
-    msg += bloquesMeta(totalGeneral);
+    msg += bloquesMeta(totalGeneral, desde, hasta);
     msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
     return msg;
   } catch (e) {
