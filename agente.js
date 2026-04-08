@@ -1071,35 +1071,40 @@ async function reporteRestock() {
 
     if (!bajos.length) return '✅ *Restock:* Todos los productos tienen stock suficiente.';
 
-    // Verificar si VectorPOS tiene datos de costo
-    const tieneCostos = bajos.some(p => p.costo > 0);
+    const tieneCostos = bajos.some(p => p.costoUnidad > 0);
 
     const lineas = [];
     let totalRestock = 0;
 
+    // Agotados primero
+    bajos.sort((a, b) => {
+      if (a.saldo === 0 && b.saldo > 0) return -1;
+      if (b.saldo === 0 && a.saldo > 0) return 1;
+      return a.saldo - b.saldo;
+    });
+
     bajos.forEach(p => {
       const nivel = p.saldo <= 0 ? '🚨' : p.saldo <= 5 ? '🔴' : '🟡';
       let bloque = `${nivel} *${p.nombre}*\n`;
-      bloque += `   📦 Stock actual: ${p.saldo} ${p.medida}\n`;
+      bloque += `   📦 Saldo actual: ${p.saldo} ${p.medida}\n`;
 
-      if (tieneCostos && p.costo > 0) {
-        // Estimar cantidad a reponer (hasta el umbral mínimo recomendado)
+      if (p.costoUnidad > 0) {
+        bloque += `   💵 Costo unidad: $${p.costoUnidad.toLocaleString('es-CO')}\n`;
+      }
+      if (p.costoTotal > 0) {
+        bloque += `   💰 Costo total stock: $${p.costoTotal.toLocaleString('es-CO')}\n`;
+      }
+      if (tieneCostos && p.costoUnidad > 0) {
         const umbral = p.medida?.toLowerCase().includes('gr') || p.medida?.toLowerCase().includes('ml') ? 500 : 20;
         const reponer = Math.max(0, umbral - p.saldo);
-        const costoTotal = reponer * p.costo;
-        totalRestock += costoTotal;
-        bloque += `   💵 Costo unitario: $${p.costo.toLocaleString('es-CO')}\n`;
-        bloque += `   📦 Reponer: ${reponer} ${p.medida}\n`;
-        bloque += `   💰 Costo total: *$${costoTotal.toLocaleString('es-CO')}*\n`;
+        const costoReponer = reponer * p.costoUnidad;
+        totalRestock += costoReponer;
+        bloque += `   🛒 Reponer: ${reponer} ${p.medida} → *$${costoReponer.toLocaleString('es-CO')}*\n`;
       }
       lineas.push(bloque);
     });
 
-    // Dividir en partes de máx 3500 chars
-    const encabezado = `💰 *COSTO DE RESTOCK (${bajos.length} productos bajos)*\n` +
-      (tieneCostos ? '' : `⚠️ _VectorPOS no tiene costos registrados. Solo se muestra el stock bajo._\n`) +
-      `\n`;
-
+    const encabezado = `💰 *COSTO DE RESTOCK (${bajos.length} productos bajos)*\n\n`;
     const partes = [];
     let parteActual = encabezado;
     for (const linea of lineas) {
@@ -1112,8 +1117,8 @@ async function reporteRestock() {
 
     let pie = `\n`;
     if (tieneCostos && totalRestock > 0) {
-      pie += `💰 *INVERSIÓN TOTAL ESTIMADA: $${totalRestock.toLocaleString('es-CO')}*\n`;
-      pie += `_Calculado para reponer al mínimo recomendado_\n`;
+      pie += `💰 *INVERSIÓN TOTAL PARA RESTOCK: $${totalRestock.toLocaleString('es-CO')}*\n`;
+      pie += `_Para reponer al mínimo recomendado_\n`;
     }
     pie += `─────────────────\n🤖 _VectorPOS — Chu_`;
     parteActual += pie;
@@ -1142,10 +1147,14 @@ async function reporteVentasVsInventario() {
     // Unificar inventario + ventas
     const mapa = {};
     inventario.forEach(p => {
-      mapa[p.nombre] = { nombre: p.nombre, stock: p.saldo, medida: p.medida || '', vendidoMes: 0, valorMes: 0 };
+      mapa[p.nombre] = {
+        nombre: p.nombre, stock: p.saldo, medida: p.medida || '',
+        costoUnidad: p.costoUnidad || 0, costoTotal: p.costoTotal || 0,
+        vendidoMes: 0, valorMes: 0,
+      };
     });
     ventasMes.forEach(p => {
-      if (!mapa[p.nombre]) mapa[p.nombre] = { nombre: p.nombre, stock: null, medida: '', vendidoMes: 0, valorMes: 0 };
+      if (!mapa[p.nombre]) mapa[p.nombre] = { nombre: p.nombre, stock: null, medida: '', costoUnidad: 0, costoTotal: 0, vendidoMes: 0, valorMes: 0 };
       mapa[p.nombre].vendidoMes = p.cantidad;
       mapa[p.nombre].valorMes   = p.valor;
     });
@@ -1156,7 +1165,8 @@ async function reporteVentasVsInventario() {
 
     if (!items.length) return '📦 Sin datos de productos para este período.';
 
-    const totalVendido = items.reduce((s, i) => s + i.valorMes, 0);
+    const totalVendido  = items.reduce((s, i) => s + i.valorMes, 0);
+    const totalStockVal = items.reduce((s, i) => s + (i.costoTotal || 0), 0);
     const mes = new Date().toLocaleString('es-CO', { month: 'long', year: 'numeric' });
 
     // Construir líneas individuales
@@ -1168,13 +1178,20 @@ async function reporteVentasVsInventario() {
       bloque += `   📈 Vendido: ${item.vendidoMes} uds`;
       if (item.valorMes > 0) bloque += ` — $${item.valorMes.toLocaleString('es-CO')}`;
       bloque += `\n`;
-      if (item.stock !== null) bloque += `   ${nivelStock} Stock: ${item.stock} ${item.medida}\n`;
+      if (item.stock !== null) {
+        bloque += `   ${nivelStock} Stock: ${item.stock} ${item.medida}`;
+        if (item.costoUnidad > 0) bloque += ` | 💵 $${item.costoUnidad.toLocaleString('es-CO')}/u`;
+        if (item.costoTotal  > 0) bloque += ` | Total: $${item.costoTotal.toLocaleString('es-CO')}`;
+        bloque += `\n`;
+      }
       lineas.push(bloque);
     });
 
     // Dividir en partes de máx 3500 chars
     const encabezado = `📦 *VENTAS VS INVENTARIO — ${mes.toUpperCase()}*\n_${monitor.fechaInicioMes()} → ${monitor.fechaHoy()}_\n_(${items.length} productos)_\n\n`;
-    const pie = `\n💰 *Total vendido: $${totalVendido.toLocaleString('es-CO')}*\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    let pie = `\n💰 *Total vendido: $${totalVendido.toLocaleString('es-CO')}*\n`;
+    if (totalStockVal > 0) pie += `🏦 Valor total en stock: $${totalStockVal.toLocaleString('es-CO')}\n`;
+    pie += `─────────────────\n🤖 _VectorPOS — Chu_`;
 
     const partes = [];
     let parteActual = encabezado;

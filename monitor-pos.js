@@ -450,13 +450,12 @@ async function consultarTodoInventario() {
   // Loguear primer item para ver todos los campos disponibles
   if (datos[0]) console.log('📋 Campos inventario:', Object.keys(datos[0]).join(', '));
   return datos.map(p => ({
-    nombre:  p.Nombre || '',
-    saldo:   parseFloat(p['Saldo Actual']) || 0,
-    medida:  p.Medida || '',
-    codigo:  p.Codigo || '',
-    // Intentar varios nombres de campo para el costo
-    costo:   parsearMonto(p['Costo'] || p['Costo Unitario'] || p['Precio Costo'] ||
-             p['Costo Promedio'] || p['Precio'] || p['Valor Unitario'] || '0'),
+    nombre:      p.Nombre || '',
+    saldo:       parseFloat(p['Saldo Actual']) || 0,
+    medida:      p.Medida || '',
+    codigo:      p.Codigo || '',
+    costoUnidad: parsearMonto(String(p['Costo Unidad'] || p['Costo Unitario'] || p['Costo'] || '0')),
+    costoTotal:  parsearMonto(String(p['Costo Total']  || p['Valor Total']    || '0')),
   }));
 }
 
