@@ -7,6 +7,9 @@ require('dotenv').config();
 const Groq = require('groq-sdk');
 const monitor = require('./monitor-pos');
 const db = require('./database');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -37,6 +40,9 @@ Cuando recibes un mensaje, PRIMERO decide si necesitas consultar datos o si pued
 [GASTOS]            → gastos, egresos, nómina, en qué se gastó, cuánto se gastó
 [CAJA]              → cierres de caja, turnos, quién cerró caja
 [VENTAS_HORA]       → ventas por hora, hora pico, cuándo se vende más, mejor hora
+[REQUERIMIENTO]     → crear requerimiento, nota, tarea, necesito algo, pedir
+[VER_REQS]          → ver requerimientos, listar requerimientos, qué está pendiente
+[EXPORTAR_EXCEL]    → exportar Excel, descargar reporte, Excel, CSV, archivo
 [AYUDA]             → ayuda, opciones, comandos
 [MENU]              → saludos: hola, buenos días, buenas, hey
 
@@ -82,14 +88,15 @@ Ejemplos:
 // FUNCIÓN PRINCIPAL
 // ──────────────────────────────────────────────
 
-// Estado: esperando que el jefe elija entre "ver menú" o "preguntar"
-let esperandoEleccion = false;
+// Estado de conversación
+let esperandoEleccion      = false;
+let esperandoRequerimiento = false;
 
 function activarEsperaEleccion() {
   esperandoEleccion = true;
 }
 
-// Mapa de números de menú a acciones directas (activo solo cuando NO se espera elección inicial)
+// Mapa de números/letras de menú a acciones directas
 const MENU_ACCIONES = {
   '1': '[REPORTE_HOY]',
   '2': '[REPORTE_MES]',
@@ -101,6 +108,12 @@ const MENU_ACCIONES = {
   '8': '[RANKING_MES]',
   '9': '[INVENTARIO]',
   '0': '[REPORTE_RANGO]',
+  'r': '[REQUERIMIENTO]',
+  'R': '[REQUERIMIENTO]',
+  'e': '[EXPORTAR_EXCEL]',
+  'E': '[EXPORTAR_EXCEL]',
+  'v': '[VER_REQS]',
+  'V': '[VER_REQS]',
 };
 
 /**
@@ -132,13 +145,18 @@ function parsearFechasDeTexto(texto) {
 async function procesarMensaje(texto) {
   const t = texto.trim();
 
+  // ── Estado: esperando descripción de un requerimiento ──
+  if (esperandoRequerimiento) {
+    esperandoRequerimiento = false;
+    return await guardarNuevoRequerimiento(texto);
+  }
+
   // ── Elección inicial (después del saludo de bienvenida) ──
   if (esperandoEleccion) {
     esperandoEleccion = false;
     if (t === '1') {
       return mensajeMenu();
     }
-    // Opción 2 o cualquier otra cosa → invitar a preguntar libremente
     if (t === '2') {
       return '¡Perfecto! Pregúntame lo que necesites 😊\n\n_Puedes pedirme ventas, inventario, cajeros, gastos, o cualquier duda sobre perfumes._';
     }
@@ -190,12 +208,12 @@ async function procesarMensaje(texto) {
 
 async function ejecutarAccion(raw) {
     if (raw.startsWith('[REPORTE_HOY]')) {
-      const datos = await monitor.monitorearVentasDiarias();
-      if (!datos) return '❌ No pude conectar a VectorPOS.';
-      return monitor.generarMensajeMeta(datos);
+      // Solo ventas de HOY (no el reporte mensual)
+      return await reporteRango(monitor.fechaHoy(), monitor.fechaHoy(), 'HOY');
     }
 
     if (raw.startsWith('[REPORTE_MES]')) {
+      // Reporte mensual completo con barra de meta
       const datos = await monitor.monitorearVentasDiarias();
       if (!datos) return '❌ No pude conectar a VectorPOS.';
       return monitor.generarMensajeMeta(datos);
@@ -269,6 +287,19 @@ async function ejecutarAccion(raw) {
 
     if (raw.startsWith('[VENTAS_HORA]')) {
       return await reporteVentasPorHora(monitor.fechaHoy(), monitor.fechaHoy(), 'HOY');
+    }
+
+    if (raw.startsWith('[REQUERIMIENTO]')) {
+      esperandoRequerimiento = true;
+      return '📝 *Nuevo requerimiento*\n\n¿Qué necesitas? Describe el requerimiento:';
+    }
+
+    if (raw.startsWith('[VER_REQS]')) {
+      return await verRequerimientos();
+    }
+
+    if (raw.startsWith('[EXPORTAR_EXCEL]')) {
+      return await exportarExcelMes();
     }
 
     if (raw.startsWith('[AYUDA]') || raw.startsWith('[MENU]')) {
@@ -614,12 +645,120 @@ async function reporteVentasPorHora(desde, hasta, titulo) {
   }
 }
 
+// ──────────────────────────────────────────────
+// REQUERIMIENTOS
+// ──────────────────────────────────────────────
+
+async function guardarNuevoRequerimiento(descripcion) {
+  try {
+    const req = await db.guardarRequerimiento(descripcion.trim());
+    return `✅ *Requerimiento #${req.id} creado*\n\n📝 _"${req.descripcion}"_\n📅 ${req.fecha}\n\nEscribe *V* para ver todos los requerimientos.`;
+  } catch(e) {
+    console.error('Error guardando requerimiento:', e.message);
+    return '❌ No pude guardar el requerimiento. Intenta de nuevo.';
+  }
+}
+
+async function verRequerimientos() {
+  try {
+    const lista = await db.listarRequerimientos();
+    if (!lista.length) return '📋 No hay requerimientos registrados.';
+
+    const pendientes = lista.filter(r => r.estado === 'pendiente');
+    const resueltos  = lista.filter(r => r.estado !== 'pendiente');
+
+    let msg = `📋 *REQUERIMIENTOS* (${lista.length} total)\n\n`;
+    if (pendientes.length) {
+      msg += `🔴 *PENDIENTES (${pendientes.length}):*\n`;
+      pendientes.slice(-10).forEach(r => {
+        msg += `• *#${r.id}* ${r.descripcion}\n  _${r.fecha?.split('T')[0] || ''}_\n`;
+      });
+    }
+    if (resueltos.length) {
+      msg += `\n✅ *RESUELTOS (${resueltos.length})*\n`;
+      resueltos.slice(-5).forEach(r => {
+        msg += `• ~~#${r.id}~~ ${r.descripcion}\n`;
+      });
+    }
+    msg += `\n_Escribe *R* para crear uno nuevo_`;
+    return msg;
+  } catch(e) {
+    return '❌ No pude cargar los requerimientos.';
+  }
+}
+
+// ──────────────────────────────────────────────
+// EXPORTAR EN EXCEL (CSV con BOM para Excel)
+// ──────────────────────────────────────────────
+
+async function exportarExcelMes() {
+  try {
+    const desde = monitor.fechaInicioMes();
+    const hasta  = monitor.fechaHoy();
+
+    const { browser, page } = await monitor.crearSesionPOS();
+    const ventas    = await monitor.extraerVentasGenerales(page, desde, hasta);
+    const cajeros   = await monitor.extraerVentasCajero(page, desde, hasta);
+    const productos = await monitor.extraerVentasProducto(page, desde, hasta);
+    await browser.close();
+
+    // Construir CSV (BOM \uFEFF para que Excel detecte UTF-8)
+    let csv = '\uFEFF';
+    csv += `REPORTE MENSUAL - ${desde} al ${hasta}\n\n`;
+
+    csv += 'VENTAS POR DIA\n';
+    csv += 'Fecha,Total,Tickets,Efectivo,Bancolombia,Nequi\n';
+    ventas.forEach(v => {
+      csv += `${v.fecha},${v.totalVentas},${v.tickets},${v.efectivo},${v.bancolombia},${v.nequi}\n`;
+    });
+
+    csv += '\nCAJEROS DEL MES\n';
+    csv += 'Cajero,Total,Tickets,Efectivo,Bancolombia,Nequi\n';
+    cajeros.forEach(c => {
+      csv += `"${c.cajero}",${c.total},${c.tickets},${c.efectivo},${c.bancolombia},${c.nequi}\n`;
+    });
+
+    csv += '\nPRODUCTOS MAS VENDIDOS\n';
+    csv += 'Producto,Cantidad,Valor\n';
+    productos.slice(0, 100).forEach(p => {
+      csv += `"${p.nombre}",${p.cantidad},${p.valor}\n`;
+    });
+
+    const filePath = path.join(os.tmpdir(), `Reporte_${hasta}.csv`);
+    fs.writeFileSync(filePath, csv, 'utf8');
+
+    return {
+      tipo: 'archivo',
+      path: filePath,
+      nombre: `Reporte_${hasta}.csv`,
+      caption: `📊 Reporte mensual ${desde} → ${hasta}\n_Ventas por día, cajeros y productos_`,
+    };
+  } catch(e) {
+    console.error('Error generando Excel:', e.message);
+    return '❌ No pude generar el archivo. Intenta de nuevo.';
+  }
+}
+
 function mensajeBienvenida() {
   return `👋 *¡Hola jefe, qué gusto saludarte!*\n\n¿Cómo te puedo ayudar?\n\n1️⃣ Ver menú de opciones\n2️⃣ Pregúntame algo`;
 }
 
 function mensajeMenu() {
-  return `📋 *MENÚ DE OPCIONES*\n\n1️⃣ Ventas de hoy\n2️⃣ Ventas de este mes\n3️⃣ Ventas del mes pasado\n4️⃣ Ventas de esta semana\n5️⃣ Productos más/menos vendidos del mes\n6️⃣ Medios de pago hoy (efectivo / transferencia)\n7️⃣ Quién trabajó hoy\n8️⃣ Ranking cajeros del mes\n9️⃣ Alertas de inventario\n0️⃣ Ventas por rango de fechas\n\n_También puedo decirte: gastos del mes, ventas por hora, cierres de caja, o recomendarte perfumes_ 😊`;
+  return `📋 *MENÚ DE OPCIONES*\n\n` +
+    `1️⃣ Ventas de hoy\n` +
+    `2️⃣ Ventas de este mes\n` +
+    `3️⃣ Ventas del mes pasado\n` +
+    `4️⃣ Ventas de esta semana\n` +
+    `5️⃣ Productos más/menos vendidos del mes\n` +
+    `6️⃣ Medios de pago hoy\n` +
+    `7️⃣ Quién trabajó hoy\n` +
+    `8️⃣ Ranking cajeros del mes\n` +
+    `9️⃣ Alertas de inventario\n` +
+    `0️⃣ Ventas por rango de fechas\n` +
+    `🇷 *R* — Crear requerimiento nuevo\n` +
+    `🇻 *V* — Ver requerimientos\n` +
+    `📊 *E* — Exportar reporte en Excel\n\n` +
+    `_También dime: gastos del mes, ventas por hora, o pregúntame sobre perfumes_ 😊`;
 }
 
-module.exports = { procesarMensaje, activarEsperaEleccion, mensajeBienvenida };
+module.exports = { procesarMensaje, activarEsperaEleccion, mensajeBienvenida, exportarExcelMes };

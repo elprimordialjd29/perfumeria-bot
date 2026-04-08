@@ -13,6 +13,7 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const agente = require('./agente');
 const reportes = require('./reportes');
+const fs = require('fs');
 
 // ──────────────────────────────────────────────
 // VALIDACIONES
@@ -96,7 +97,19 @@ bot.on('message', async (msg) => {
 
   try {
     const respuesta = await agente.procesarMensaje(texto);
-    await enviarMensaje(chatId, respuesta);
+
+    // Respuesta tipo archivo (CSV/Excel)
+    if (respuesta && typeof respuesta === 'object' && respuesta.tipo === 'archivo') {
+      await bot.sendDocument(chatId, respuesta.path, {}, {
+        filename: respuesta.nombre,
+        contentType: 'text/csv',
+      });
+      await enviarMensaje(chatId, respuesta.caption || '📎 Archivo enviado.');
+      // Limpiar archivo temporal
+      try { fs.unlinkSync(respuesta.path); } catch(e) {}
+    } else {
+      await enviarMensaje(chatId, respuesta);
+    }
   } catch (error) {
     console.error('❌ Error:', error.message);
     await bot.sendMessage(chatId, '😅 Tuve un problema. Intenta de nuevo en un momento.');

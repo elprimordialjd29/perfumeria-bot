@@ -176,6 +176,37 @@ async function actualizarConfig(campos) {
   Object.assign(configCache, campos);
 }
 
+// ──────────────────────────────────────────────
+// REQUERIMIENTOS
+// Guardados como JSON en la tabla config (clave: "requerimientos")
+// ──────────────────────────────────────────────
+
+async function guardarRequerimiento(descripcion) {
+  const client = getSupabase();
+  const { data } = await client.from('config').select('value').eq('key', 'requerimientos').single();
+  const lista = data?.value ? JSON.parse(data.value) : [];
+
+  const nuevoId = (lista.length > 0 ? Math.max(...lista.map(r => r.id)) : 0) + 1;
+  const nuevo = {
+    id: nuevoId,
+    descripcion,
+    fecha: new Date().toISOString(),
+    estado: 'pendiente',
+  };
+  lista.push(nuevo);
+
+  await client.from('config').upsert(
+    [{ key: 'requerimientos', value: JSON.stringify(lista) }],
+    { onConflict: 'key' }
+  );
+  return nuevo;
+}
+
+async function listarRequerimientos() {
+  const { data } = await getSupabase().from('config').select('value').eq('key', 'requerimientos').single();
+  return data?.value ? JSON.parse(data.value) : [];
+}
+
 module.exports = {
   registrarVenta,
   obtenerVentas,
@@ -190,4 +221,6 @@ module.exports = {
   limpiarHistorial,
   obtenerConfig,
   actualizarConfig,
+  guardarRequerimiento,
+  listarRequerimientos,
 };
