@@ -24,7 +24,7 @@ Cuando recibes un mensaje, PRIMERO decide si necesitas consultar datos o si pued
 [REPORTE_MES]       → este mes, meta mensual, avance del mes
 [REPORTE_MES_ANT]   → mes pasado, ventas anteriores
 [REPORTE_SEMANA]    → esta semana
-[REPORTE_RANGO]     → rango de fechas (extrae: [REPORTE_RANGO:YYYY-MM-DD:YYYY-MM-DD])
+[REPORTE_RANGO:YYYY-MM-DD:YYYY-MM-DD] → rango de fechas SIEMPRE con fechas en formato ISO. Ejemplo: "del 1 al 15 de marzo 2026" → [REPORTE_RANGO:2026-03-01:2026-03-15]. Si el usuario da UNA fecha, úsala como desde y hasta.
 [PRODUCTOS_MES]     → qué se vendió más, ranking de perfumes, productos más vendidos, cuál fue el más vendido, el menos vendido, participación de productos
 [PRODUCTOS_HOY]     → qué se vendió hoy, productos de hoy
 [MEDIOS_PAGO_HOY]   → efectivo hoy, transferencias hoy, cómo pagaron hoy
@@ -34,8 +34,16 @@ Cuando recibes un mensaje, PRIMERO decide si necesitas consultar datos o si pued
 [RANKING_SEM]       → ranking cajeros semana
 [RANKING_MES]       → ranking cajeros mes, quién vende más
 [INVENTARIO]        → inventario, stock, productos bajos, qué falta
+[GASTOS]            → gastos, egresos, nómina, en qué se gastó, cuánto se gastó
+[CAJA]              → cierres de caja, turnos, quién cerró caja
+[VENTAS_HORA]       → ventas por hora, hora pico, cuándo se vende más, mejor hora
 [AYUDA]             → ayuda, opciones, comandos
 [MENU]              → saludos: hola, buenos días, buenas, hey
+
+━━━ FECHAS — REGLA IMPORTANTE ━━━
+Si el usuario da una fecha en formato DD-MM-YYYY (ej: "07-04-2026"), conviértela a YYYY-MM-DD (ej: 2026-04-07).
+Si da un rango como "del 1 al 15 de abril", genera [REPORTE_RANGO:2026-04-01:2026-04-15].
+NUNCA pidas las fechas de nuevo si ya las dio — extráelas tú.
 
 ━━━ CUANDO YA TIENES LOS DATOS ━━━
 Si el mensaje incluye datos entre <<<DATOS>>> y <<<FIN_DATOS>>>, úsalos para responder de forma inteligente y analítica. Puedes:
@@ -45,16 +53,30 @@ Si el mensaje incluye datos entre <<<DATOS>>> y <<<FIN_DATOS>>>, úsalos para re
 - Responder preguntas específicas sobre los datos
 - Identificar tendencias
 
+━━━ EXPERTO EN PERFUMERÍA ━━━
+También eres experto mundial en perfumes. Responde con confianza SIN etiqueta sobre:
+- Perfumes árabes y orientales: Lattafa, Al Haramain, Ajmal, Rasasi, Swiss Arabian, Armaf, Nabeel, Maison Alhambra
+- Mejores ouds, notas orientales, amaderados, florales, frutales
+- Clones y dupes de lujo: Lattafa Asad ≈ Sauvage, Khamrah ≈ Spicebomb, etc.
+- Recomendaciones por género, ocasión (trabajo, noche, verano, invierno), presupuesto
+- Ingredientes: oud, musk, sándalo, bergamota, rosa, jazmín, ámbar, pachulí
+- Proyección, sillage, longevidad, familias olfativas
+- Consejos para vender más perfumes, cómo describir fragancias a clientes
+
 ━━━ INTELIGENCIA ━━━
 Si el usuario hace preguntas que NO requieren datos (estrategias, consejos, preguntas generales sobre perfumería, cómo mejorar ventas, etc.), responde directamente sin etiqueta usando tu conocimiento.
 
 Ejemplos:
 "qué perfume se vendió más este mes" → "[PRODUCTOS_MES]"
 "cuál fue el menos vendido hoy" → "[PRODUCTOS_HOY]"
-"dame consejos para vender más" → (responde directamente con consejos)
-"cómo manejo el inventario" → (responde directamente)
+"gastos de este mes" → "[GASTOS]"
+"ventas por hora de hoy" → "[VENTAS_HORA]"
+"dame consejos para vender más" → (responde directamente)
+"cuál es el mejor perfume árabe" → (responde directamente con tu conocimiento)
 "hola" → "[MENU]"
-"buenos días jefe" → "[MENU]"`;
+"buenos días jefe" → "[MENU]"
+"ventas del 1 al 7 de abril" → "[REPORTE_RANGO:2026-04-01:2026-04-07]"
+"07-04-2026" (cuando ya pidiste fecha) → "[REPORTE_RANGO:2026-04-07:2026-04-07]"`;
 
 // ──────────────────────────────────────────────
 // FUNCIÓN PRINCIPAL
@@ -74,14 +96,51 @@ const MENU_ACCIONES = {
   '0': '[REPORTE_RANGO]',
 };
 
+/**
+ * Extrae fechas de texto en varios formatos:
+ * - DD-MM-YYYY / DD/MM/YYYY  → convierte a YYYY-MM-DD
+ * - YYYY-MM-DD  → ya en formato correcto
+ * Retorna { desde, hasta } o null
+ */
+function parsearFechasDeTexto(texto) {
+  // YYYY-MM-DD
+  const isoMatches = [...texto.matchAll(/(\d{4}-\d{2}-\d{2})/g)].map(m => m[1]);
+  if (isoMatches.length >= 2) return { desde: isoMatches[0], hasta: isoMatches[1] };
+  if (isoMatches.length === 1) return { desde: isoMatches[0], hasta: isoMatches[0] };
+
+  // DD-MM-YYYY o DD/MM/YYYY
+  const dmyMatches = [...texto.matchAll(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/g)];
+  if (dmyMatches.length >= 2) {
+    const f1 = `${dmyMatches[0][3]}-${dmyMatches[0][2].padStart(2,'0')}-${dmyMatches[0][1].padStart(2,'0')}`;
+    const f2 = `${dmyMatches[1][3]}-${dmyMatches[1][2].padStart(2,'0')}-${dmyMatches[1][1].padStart(2,'0')}`;
+    return { desde: f1, hasta: f2 };
+  }
+  if (dmyMatches.length === 1) {
+    const f = `${dmyMatches[0][3]}-${dmyMatches[0][2].padStart(2,'0')}-${dmyMatches[0][1].padStart(2,'0')}`;
+    return { desde: f, hasta: f };
+  }
+  return null;
+}
+
 async function procesarMensaje(texto) {
   // Atajo directo por número de menú
   if (MENU_ACCIONES[texto.trim()]) {
     const accion = MENU_ACCIONES[texto.trim()];
     historial.push({ role: 'user', content: texto });
     historial.push({ role: 'assistant', content: accion });
-    // Reusar el mismo switch ejecutando con el raw simulado
     return await ejecutarAccion(accion);
+  }
+
+  // Fix [REPORTE_RANGO]: si el bot estaba esperando fechas, extráelas directamente
+  const ultimoBot = [...historial].reverse().find(h => h.role === 'assistant');
+  if (ultimoBot && (ultimoBot.content.includes('REPORTE_RANGO') || ultimoBot.content.includes('rango de fechas'))) {
+    const fechas = parsearFechasDeTexto(texto);
+    if (fechas) {
+      historial.push({ role: 'user', content: texto });
+      const tag = `[REPORTE_RANGO:${fechas.desde}:${fechas.hasta}]`;
+      historial.push({ role: 'assistant', content: tag });
+      return await ejecutarAccion(tag);
+    }
   }
 
   historial.push({ role: 'user', content: texto });
@@ -176,6 +235,18 @@ async function ejecutarAccion(raw) {
 
     if (raw.startsWith('[PRODUCTOS_HOY]')) {
       return await reporteProductos(monitor.fechaHoy(), monitor.fechaHoy(), 'HOY');
+    }
+
+    if (raw.startsWith('[GASTOS]')) {
+      return await reporteGastos(monitor.fechaInicioMes(), monitor.fechaHoy(), 'ESTE MES');
+    }
+
+    if (raw.startsWith('[CAJA]')) {
+      return await reporteCierresCaja(monitor.fechaInicioMes(), monitor.fechaHoy());
+    }
+
+    if (raw.startsWith('[VENTAS_HORA]')) {
+      return await reporteVentasPorHora(monitor.fechaHoy(), monitor.fechaHoy(), 'HOY');
     }
 
     if (raw.startsWith('[AYUDA]') || raw.startsWith('[MENU]')) {
@@ -404,6 +475,122 @@ async function reporteQuienTrabajo() {
   }
 }
 
+// ──────────────────────────────────────────────
+// GASTOS
+// ──────────────────────────────────────────────
+
+async function reporteGastos(desde, hasta, titulo) {
+  try {
+    const { browser, page } = await monitor.crearSesionPOS();
+    const gastos = await monitor.extraerGastos(page, desde, hasta);
+    await browser.close();
+
+    if (!gastos.length) return `💸 Sin gastos registrados para ${titulo}.`;
+
+    const totalGastos = gastos.reduce((s, g) => s + g.valor, 0);
+
+    // Agrupar por concepto
+    const porConcepto = {};
+    for (const g of gastos) {
+      if (!porConcepto[g.concepto]) porConcepto[g.concepto] = 0;
+      porConcepto[g.concepto] += g.valor;
+    }
+    const conceptosOrdenados = Object.entries(porConcepto).sort((a, b) => b[1] - a[1]);
+
+    let msg = `💸 *GASTOS — ${titulo}*\n`;
+    msg += `_${desde} → ${hasta}_\n\n`;
+    if (totalGastos > 0) msg += `💰 *Total gastos: $${totalGastos.toLocaleString('es-CO')}*\n\n`;
+
+    msg += `📋 *Detalle:*\n`;
+    gastos.slice(0, 10).forEach(g => {
+      msg += `• *${g.concepto}*`;
+      if (g.detalle) msg += ` — ${g.detalle}`;
+      if (g.tercero) msg += ` (${g.tercero})`;
+      if (g.valor > 0) msg += `: $${g.valor.toLocaleString('es-CO')}`;
+      if (g.fecha) msg += ` 📅 ${g.fecha}`;
+      msg += '\n';
+    });
+    if (gastos.length > 10) msg += `_(y ${gastos.length - 10} más...)_\n`;
+
+    if (conceptosOrdenados.length > 1) {
+      msg += `\n📊 *Por concepto:*\n`;
+      conceptosOrdenados.forEach(([c, v]) => {
+        if (v > 0) msg += `• ${c}: $${v.toLocaleString('es-CO')}\n`;
+      });
+    }
+
+    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch (e) {
+    console.error('Error gastos:', e.message);
+    return '❌ No pude consultar los gastos.';
+  }
+}
+
+// ──────────────────────────────────────────────
+// CIERRES DE CAJA
+// ──────────────────────────────────────────────
+
+async function reporteCierresCaja(desde, hasta) {
+  try {
+    const { browser, page } = await monitor.crearSesionPOS();
+    const cierres = await monitor.extraerCierresCaja(page, desde, hasta);
+    await browser.close();
+
+    if (!cierres.length) return `🏧 Sin cierres de caja registrados para este período.`;
+
+    let msg = `🏧 *CIERRES DE CAJA*\n`;
+    msg += `_${desde} → ${hasta}_\n\n`;
+
+    cierres.forEach(c => {
+      msg += `📅 *${c.fecha}*\n`;
+      if (c.turnos) msg += `   ${c.turnos.substring(0, 120)}\n`;
+      msg += '\n';
+    });
+
+    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch (e) {
+    console.error('Error cierres:', e.message);
+    return '❌ No pude consultar los cierres de caja.';
+  }
+}
+
+// ──────────────────────────────────────────────
+// VENTAS POR HORA
+// ──────────────────────────────────────────────
+
+async function reporteVentasPorHora(desde, hasta, titulo) {
+  try {
+    const { browser, page } = await monitor.crearSesionPOS();
+    const porHora = await monitor.extraerVentasPorHora(page, desde, hasta);
+    await browser.close();
+
+    const activas = porHora.filter(h => h.total > 0);
+    if (!activas.length) return `⏰ Sin ventas por hora para ${titulo}.`;
+
+    const pico = activas.reduce((max, h) => h.total > max.total ? h : max, activas[0]);
+    const total = activas.reduce((s, h) => s + h.total, 0);
+
+    let msg = `⏰ *VENTAS POR HORA — ${titulo}*\n\n`;
+    msg += `🏆 *Hora pico: ${pico.hora}:00 — $${pico.total.toLocaleString('es-CO')}*\n\n`;
+
+    activas.forEach(h => {
+      const barras = Math.round((h.total / pico.total) * 10);
+      const barra = '█'.repeat(barras) + '░'.repeat(10 - barras);
+      const pct = ((h.total / total) * 100).toFixed(0);
+      msg += `\`${String(h.hora).padStart(2,'0')}:00\` ${barra} $${h.total.toLocaleString('es-CO')} (${pct}%)\n`;
+    });
+
+    msg += `\n💰 Total: $${total.toLocaleString('es-CO')}`;
+    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch (e) {
+    console.error('Error ventas hora:', e.message);
+    return '❌ No pude consultar las ventas por hora.';
+  }
+}
+
 function mensajeMenu() {
   return `👋 *Hola jefe, ¿en qué te puedo ayudar?*
 
@@ -418,7 +605,7 @@ function mensajeMenu() {
 9️⃣ Alertas de inventario
 0️⃣ Ventas por rango de fechas
 
-_Escribe el número o pregúntame lo que quieras_ 😊`;
+_También puedo decirte: gastos del mes, ventas por hora, cierres de caja, o recomendarte perfumes_ 😊`;
 }
 
 module.exports = { procesarMensaje };

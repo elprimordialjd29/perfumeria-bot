@@ -475,6 +475,108 @@ function generarMensajeAlertas(resultado) {
   return msg;
 }
 
+// ──────────────────────────────────────────────
+// GASTOS / EGRESOS
+// ──────────────────────────────────────────────
+
+async function extraerGastos(page, fechaInicial, fechaFinal) {
+  const url = `${BASE}/index.php?r=correcciones%2Fgastos&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
+  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+
+  const filas = await page.evaluate(() => {
+    const rows = [];
+    document.querySelectorAll('table tr').forEach(tr => {
+      const cells = [...tr.querySelectorAll('td,th')].map(c => c.innerText.trim().replace(/\s+/g, ' '));
+      if (cells.length > 0) rows.push(cells);
+    });
+    return rows;
+  });
+
+  const gastos = [];
+  for (const fila of filas) {
+    if (!fila[0] || fila[0] === 'Concepto' || fila[0] === 'Total') continue;
+    gastos.push({
+      concepto: fila[0],
+      detalle: fila[1] || '',
+      tercero: fila[2] || '',
+      fecha: fila[3] || '',
+      valor: parsearMonto(fila[4]),
+    });
+  }
+  return gastos;
+}
+
+// ──────────────────────────────────────────────
+// CIERRES DE CAJA
+// ──────────────────────────────────────────────
+
+async function extraerCierresCaja(page, fechaInicial, fechaFinal) {
+  const url = `${BASE}/index.php?r=ventas%2Fcierres&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
+  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+
+  const filas = await page.evaluate(() => {
+    const rows = [];
+    document.querySelectorAll('table tr').forEach(tr => {
+      const cells = [...tr.querySelectorAll('td,th')].map(c => c.innerText.trim().replace(/\s+/g, ' '));
+      if (cells.length > 0) rows.push(cells);
+    });
+    return rows;
+  });
+
+  const cierres = [];
+  for (const fila of filas) {
+    if (!fila[0] || fila[0] === 'Fecha' || fila[0] === 'Total') continue;
+    if (!fila[0].match(/^\d{4}-\d{2}-\d{2}$/)) continue;
+    cierres.push({
+      fecha: fila[0],
+      turnos: fila[1] || '',
+      sucursal: fila[2] || '',
+    });
+  }
+  return cierres;
+}
+
+// ──────────────────────────────────────────────
+// VENTAS POR HORA
+// ──────────────────────────────────────────────
+
+async function extraerVentasPorHora(page, fechaInicial, fechaFinal) {
+  const url = `${BASE}/index.php?r=ventas%2Fhora&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
+  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+
+  const filas = await page.evaluate(() => {
+    const rows = [];
+    document.querySelectorAll('table tr').forEach(tr => {
+      const cells = [...tr.querySelectorAll('td,th')].map(c => c.innerText.trim().replace(/\s+/g, ' '));
+      if (cells.length > 0) rows.push(cells);
+    });
+    return rows;
+  });
+
+  // Find header row to map hour columns
+  let horasHeader = [];
+  const porHora = {}; // hora → total acumulado
+
+  for (const fila of filas) {
+    if (fila[0] === 'Dia' || fila[0] === 'Día') {
+      horasHeader = fila; // e.g. ["Dia","Total","Hora_5","Hora_6",...,"Hora_23"]
+      continue;
+    }
+    if (!fila[0] || !fila[0].match(/^\d{4}-\d{2}-\d{2}$/)) continue;
+
+    for (let i = 2; i < horasHeader.length; i++) {
+      const hora = horasHeader[i]?.replace('Hora_', '') || String(i + 3);
+      const val = parsearMonto(fila[i]);
+      if (!porHora[hora]) porHora[hora] = 0;
+      porHora[hora] += val;
+    }
+  }
+
+  return Object.entries(porHora)
+    .map(([hora, total]) => ({ hora: parseInt(hora), total }))
+    .sort((a, b) => a.hora - b.hora);
+}
+
 module.exports = {
   monitorearVentasDiarias,
   generarMensajeMeta,
@@ -484,6 +586,9 @@ module.exports = {
   extraerVentasGenerales,
   extraerVentasCajero,
   extraerVentasProducto,
+  extraerGastos,
+  extraerCierresCaja,
+  extraerVentasPorHora,
   META_MENSUAL,
   fechaHoy,
   fechaInicioMes,
