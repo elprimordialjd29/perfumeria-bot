@@ -15,32 +15,10 @@ function iniciar(bot) {
   telegramBot = bot;
   adminId = process.env.TELEGRAM_ADMIN_ID;
 
-  // ── Alertas inventario: 8:00 AM diario ──
-  cron.schedule('0 8 * * *', async () => {
-    console.log('📦 Revisando alertas de inventario...');
-    try {
-      const resultado = await monitor.consultarAlertasInventario();
-      const hayAlertas = resultado && (resultado.alertasGramos.length > 0 || resultado.alertasUnidades.length > 0);
-      if (hayAlertas) {
-        const msg = monitor.generarMensajeAlertas(resultado);
-        await notificar('⚠️ Alertas de Inventario', msg);
-      }
-    } catch(e) { console.error('Error alertas inventario:', e.message); }
-  }, { timezone: 'America/Bogota' });
-
-  // ── VectorPOS: 7:00 AM y 7:00 PM ──
-  cron.schedule('0 7,19 * * *', async () => {
-    console.log('🔍 Revisando VectorPOS...');
-    try {
-      const datos = await monitor.monitorearVentasDiarias();
-      if (datos) await notificar('📊 Reporte VectorPOS', monitor.generarMensajeMeta(datos));
-    } catch(e) { console.error('Error monitoreo POS:', e.message); }
-  }, { timezone: 'America/Bogota' });
-
-  // ── Reporte diario completo: 8:00 PM ──
-  cron.schedule('0 20 * * *', async () => {
-    console.log('📨 Enviando reporte diario...');
-    await enviarReporteDiario();
+  // ── Reporte matutino: 7:30 AM todos los días ──
+  cron.schedule('30 7 * * *', async () => {
+    console.log('🌅 Enviando reporte matutino 7:30 AM...');
+    await enviarReporteMatutino();
   }, { timezone: 'America/Bogota' });
 
   // ── Reporte semanal: lunes 8:00 AM ──
@@ -50,9 +28,7 @@ function iniciar(bot) {
   }, { timezone: 'America/Bogota' });
 
   console.log('✅ Reportes automáticos activados:');
-  console.log('   📦 Inventario: 8:00 AM');
-  console.log('   🔍 VectorPOS: 7:00 AM y 7:00 PM');
-  console.log('   📅 Diario: 8:00 PM');
+  console.log('   🌅 Matutino (ayer + mes + inventario): 7:30 AM diario');
   console.log('   📅 Semanal: lunes 8:00 AM');
 }
 
@@ -79,6 +55,100 @@ async function notificar(asunto, mensaje) {
 
   await Promise.allSettled(promesas);
   console.log(`✅ Notificación enviada: ${asunto}`);
+}
+
+// ──────────────────────────────────────────────
+// REPORTE MATUTINO — 7:30 AM
+// Ventas ayer + avance del mes + inventario bajo
+// ──────────────────────────────────────────────
+
+async function enviarReporteMatutino() {
+  try {
+    const hoy   = new Date();
+    const ayer  = new Date(hoy); ayer.setDate(hoy.getDate() - 1);
+    const fAyer = ayer.toISOString().split('T')[0];
+    const fHoy  = hoy.toISOString().split('T')[0];
+    const fMes  = monitor.fechaInicioMes();
+    const meta  = parseInt(process.env.META_MENSUAL) || 10000000;
+
+    const labelAyer = ayer.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' });
+    const diasEnMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
+    const diasRestantes = Math.max(1, diasEnMes - hoy.getDate());
+    const metaDiaria = Math.round(meta / diasEnMes);
+
+    // 1. Ventas de ayer
+    const { browser, page } = await monitor.crearSesionPOS();
+    const cajerosAyer = await monitor.extraerVentasCajero(page, fAyer, fAyer);
+    const cajerosMes  = await monitor.extraerVentasCajero(page, fMes, fAyer);
+    await browser.close();
+
+    const totalAyer = cajerosAyer.reduce((s, c) => s + c.total, 0);
+    const ticketsAyer = cajerosAyer.reduce((s, c) => s + c.tickets, 0);
+    const totalMes  = cajerosMes.reduce((s, c) => s + c.total, 0);
+    const faltaMeta = Math.max(0, meta - totalMes);
+    const pctMeta   = ((totalMes / meta) * 100).toFixed(1);
+    const promNecesario = Math.round(faltaMeta / diasRestantes);
+
+    const barra = Math.min(Math.round(Number(pctMeta) / 10), 10);
+    const progreso = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
+    const medallas = ['🥇', '🥈', '🥉'];
+
+    let msg = `🌅 *BUENOS DÍAS — ${hoy.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }).toUpperCase()}*\n\n`;
+
+    // Bloque ayer
+    msg += `📅 *VENTAS DE AYER (${labelAyer.toUpperCase()})*\n`;
+    msg += `💰 Total: *$${totalAyer.toLocaleString('es-CO')}* | 🎫 ${ticketsAyer} tickets\n`;
+    if (totalAyer > 0 && ticketsAyer > 0) {
+      msg += `💵 Promedio ticket: $${Math.round(totalAyer / ticketsAyer).toLocaleString('es-CO')}\n`;
+    }
+    if (cajerosAyer.length > 0) {
+      msg += `👥 Cajeros:\n`;
+      cajerosAyer.forEach((c, i) => {
+        msg += `   ${medallas[i] || `${i+1}.`} *${c.cajero}*: $${c.total.toLocaleString('es-CO')} (${c.tickets} tkt)\n`;
+      });
+    } else {
+      msg += `_Sin ventas registradas ayer_\n`;
+    }
+
+    // Bloque mes
+    msg += `\n📊 *AVANCE DEL MES*\n`;
+    msg += `${progreso} ${pctMeta}%\n`;
+    msg += `💰 Vendido: *$${totalMes.toLocaleString('es-CO')}* / $${meta.toLocaleString('es-CO')}\n`;
+    if (faltaMeta > 0) {
+      msg += `📉 Falta: *$${faltaMeta.toLocaleString('es-CO')}*\n`;
+      msg += `📌 Necesario/día: $${promNecesario.toLocaleString('es-CO')} | Meta/día: $${metaDiaria.toLocaleString('es-CO')}\n`;
+      msg += `📆 Días restantes: ${diasRestantes}\n`;
+    } else {
+      msg += `🏆 *¡META DEL MES CUMPLIDA!*\n`;
+    }
+
+    // Bloque inventario bajo
+    try {
+      const alertas = await monitor.consultarAlertasInventario();
+      const bajos = [
+        ...(alertas?.alertasGramos   || []),
+        ...(alertas?.alertasUnidades || []),
+      ];
+      if (bajos.length > 0) {
+        msg += `\n⚠️ *INVENTARIO BAJO (${bajos.length} productos)*\n`;
+        bajos.slice(0, 10).forEach(p => {
+          const nivel = p.saldo <= 0 ? '🚨 AGOTADO' : p.saldo <= 5 ? '🔴 CRÍTICO' : '🟡 BAJO';
+          msg += `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'uds'}\n`;
+        });
+        if (bajos.length > 10) msg += `_...y ${bajos.length - 10} más_\n`;
+      } else {
+        msg += `\n✅ *Inventario: sin alertas*\n`;
+      }
+    } catch(e) {
+      msg += `\n⚠️ _No pude verificar el inventario_\n`;
+    }
+
+    msg += `\n─────────────────\n🤖 _Reporte automático — Chu_`;
+    await notificar('🌅 Reporte Matutino', msg);
+
+  } catch(e) {
+    console.error('Error reporte matutino:', e.message);
+  }
 }
 
 // ──────────────────────────────────────────────
