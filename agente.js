@@ -369,7 +369,7 @@ async function ejecutarAccion(rawOriginal) {
       return await reporteSemana();
     }
 
-    if (raw.startsWith('[REPORTE_RANGO]')) {
+    if (raw.startsWith('[REPORTE_RANGO')) {
       // Extraer fechas si las hay: [REPORTE_RANGO:2026-03-01:2026-03-31]
       const match = raw.match(/\[REPORTE_RANGO:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})\]/);
       if (match) {
