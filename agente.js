@@ -416,6 +416,27 @@ async function ejecutarAccion(raw) {
 }
 
 // ──────────────────────────────────────────────
+// HELPER: BLOQUE DE META
+// ──────────────────────────────────────────────
+
+function bloquesMeta(total) {
+  const meta = parseInt(process.env.META_MENSUAL) || 10000000;
+  const pct  = ((total / meta) * 100).toFixed(1);
+  const faltante = meta - total;
+  const barra = Math.round(pct / 10);
+  const progreso = '🟩'.repeat(Math.min(barra, 10)) + '⬜'.repeat(Math.max(10 - barra, 0));
+
+  let bloque = `\n🎯 *META MENSUAL: $${meta.toLocaleString('es-CO')}*\n`;
+  bloque += `${progreso} ${pct}%\n`;
+  if (faltante > 0) {
+    bloque += `📉 Faltó: $${faltante.toLocaleString('es-CO')} para la meta\n`;
+  } else {
+    bloque += `🏆 ¡Meta cumplida! Superó por $${Math.abs(faltante).toLocaleString('es-CO')}\n`;
+  }
+  return bloque;
+}
+
+// ──────────────────────────────────────────────
 // REPORTES VECTORPOS POR PERÍODO
 // ──────────────────────────────────────────────
 
@@ -474,6 +495,7 @@ async function reporteRango(desde, hasta, titulo) {
       });
     }
 
+    msg += bloquesMeta(total);
     msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
     return msg;
   } catch (e) {
@@ -512,7 +534,9 @@ async function reporteCajeroIndividual(nombre, desde, hasta, titulo) {
     if (encontrado.efectivo > 0)    msg += `\n💵 Efectivo: $${encontrado.efectivo.toLocaleString('es-CO')}`;
     if (encontrado.bancolombia > 0) msg += `\n🏦 Bancolombia: $${encontrado.bancolombia.toLocaleString('es-CO')}`;
     if (encontrado.nequi > 0)       msg += `\n📱 Nequi: $${encontrado.nequi.toLocaleString('es-CO')}`;
-    msg += `\n\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `\n`;
+    msg += bloquesMeta(totalPeriodo);
+    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
     return msg;
   } catch (e) {
     console.error('Error cajero individual:', e.message);
@@ -573,7 +597,9 @@ async function reporteRankingPOS(desde, hasta, titulo) {
       msg += '\n';
     });
 
-    msg += `💵 *Total: $${totalGeneral.toLocaleString('es-CO')}*\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `💵 *Total: $${totalGeneral.toLocaleString('es-CO')}*\n`;
+    msg += bloquesMeta(totalGeneral);
+    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
     return msg;
   } catch (e) {
     console.error('Error ranking:', e.message);
