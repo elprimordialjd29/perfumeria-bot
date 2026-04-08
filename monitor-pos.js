@@ -145,37 +145,73 @@ async function extraerVentasCajero(page, fechaInicial, fechaFinal) {
     return rows;
   });
 
-  const cajeros = [];
+  // Detectar índices de columnas desde la fila de cabecera
+  let colCajero   = 0;
+  let colTickets  = 2;
+  let colEfectivo = 3;
+  let colBanc     = 4;
+  let colNequi    = 5;
+  let colTotal    = -1; // -1 = usar última columna
 
   for (const fila of filas) {
-    // Saltear cabecera (fila[0] = 'Cajero') y filas vacías
-    if (!fila[0] || fila[0] === 'Cajero' || fila[0] === 'Total') continue;
+    if (fila[0] === 'Cajero' || fila[0] === 'cajero') {
+      const h = fila.map(c => c.toLowerCase());
+      const iTickets  = h.findIndex(c => c.includes('ticket') || c.includes('trans') || c.includes('fact'));
+      const iEfectivo = h.findIndex(c => c.includes('efectivo'));
+      const iBanc     = h.findIndex(c => c.includes('banc') || c.includes('colombia'));
+      const iNequi    = h.findIndex(c => c.includes('nequi'));
+      const iTotal    = h.lastIndexOf('total');  // la ÚLTIMA columna "Total"
+      if (iTickets  > 0) colTickets  = iTickets;
+      if (iEfectivo > 0) colEfectivo = iEfectivo;
+      if (iBanc     > 0) colBanc     = iBanc;
+      if (iNequi    > 0) colNequi    = iNequi;
+      colTotal = iTotal > 0 ? iTotal : fila.length - 1;
+      break;
+    }
+  }
+
+  // Si no se detectó la cabecera, usar la última columna como total
+  const usarUltimaCol = colTotal < 0;
+
+  const cajeros = [];
+  for (const fila of filas) {
+    if (!fila[0] || fila[0] === 'Cajero' || fila[0] === 'cajero' || fila[0] === 'Total') continue;
+    const iTotal = usarUltimaCol ? fila.length - 1 : colTotal;
 
     cajeros.push({
-      cajero: fila[0],
-      concepto: fila[1] || '',
-      tickets: parseInt(fila[2]) || 0,
-      efectivo: parsearMonto(fila[3]),
-      bancolombia: parsearMonto(fila[4]),
-      nequi: parsearMonto(fila[5]),
-      total: parsearMonto(fila[6]),
+      cajero:      fila[colCajero] || '',
+      tickets:     parseInt(fila[colTickets]) || 0,
+      efectivo:    parsearMonto(fila[colEfectivo]),
+      bancolombia: parsearMonto(fila[colBanc]),
+      nequi:       parsearMonto(fila[colNequi]),
+      total:       parsearMonto(fila[iTotal]),
     });
   }
 
   // Agrupar por cajero (puede haber múltiples filas por cajero)
   const porCajero = {};
   for (const c of cajeros) {
+    if (!c.cajero) continue;
     if (!porCajero[c.cajero]) {
       porCajero[c.cajero] = { cajero: c.cajero, tickets: 0, efectivo: 0, bancolombia: 0, nequi: 0, total: 0 };
     }
-    porCajero[c.cajero].tickets += c.tickets;
-    porCajero[c.cajero].efectivo += c.efectivo;
+    porCajero[c.cajero].tickets     += c.tickets;
+    porCajero[c.cajero].efectivo    += c.efectivo;
     porCajero[c.cajero].bancolombia += c.bancolombia;
-    porCajero[c.cajero].nequi += c.nequi;
-    porCajero[c.cajero].total += c.total;
+    porCajero[c.cajero].nequi       += c.nequi;
+    porCajero[c.cajero].total       += c.total;
   }
 
-  return Object.values(porCajero).sort((a, b) => b.total - a.total);
+  // Fallback: si todos los totales son 0 pero hay tickets, recalcular total
+  // sumando los medios de pago conocidos
+  const agrupados = Object.values(porCajero);
+  for (const c of agrupados) {
+    if (c.total === 0 && (c.efectivo + c.bancolombia + c.nequi) > 0) {
+      c.total = c.efectivo + c.bancolombia + c.nequi;
+    }
+  }
+
+  return agrupados.sort((a, b) => b.total - a.total);
 }
 
 // ──────────────────────────────────────────────

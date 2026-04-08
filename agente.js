@@ -105,6 +105,41 @@ const MENU_ACCIONES = {
   'V': '[VER_REQS]',
 };
 
+/** Retorna objeto con fechas de referencia relativas */
+function fechasRelativas() {
+  const hoy   = new Date();
+  const ayer  = new Date(hoy); ayer.setDate(hoy.getDate() - 1);
+  const antier= new Date(hoy); antier.setDate(hoy.getDate() - 2);
+  const diasDesdeElLunes = hoy.getDay() === 0 ? 6 : hoy.getDay() - 1;
+  const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - diasDesdeElLunes);
+  const fmt = d => d.toISOString().split('T')[0];
+  return { hoy: fmt(hoy), ayer: fmt(ayer), antier: fmt(antier), lunes: fmt(lunes) };
+}
+
+/**
+ * Detecta expresiones de fecha relativa y retorna el tag [REPORTE_RANGO:...] listo
+ * para ejecutar sin pasar por Groq.
+ */
+function detectarFechaRelativa(texto) {
+  const t = texto.toLowerCase().trim();
+  const r = fechasRelativas();
+
+  // Patrones relativos simples
+  const patrones = [
+    [/^(ventas\s+(de\s+)?)?ayer(\s+nada\s+m[aá]s)?$/, r.ayer, r.ayer],
+    [/(ventas\s+(del?\s+)?)?ayer\s+y\s+hoy/,          r.ayer, r.hoy],
+    [/(ventas\s+(del?\s+)?)?ayer\s+(a|hasta|y)\s+hoy/, r.ayer, r.hoy],
+    [/^(ventas\s+(de\s+)?)?antier$/, r.antier, r.antier],
+    [/antier\s+(a|hasta|y)\s+hoy/,   r.antier, r.hoy],
+    [/antier\s+(a|hasta|y)\s+ayer/,  r.antier, r.ayer],
+  ];
+
+  for (const [regex, desde, hasta] of patrones) {
+    if (regex.test(t)) return `[REPORTE_RANGO:${desde}:${hasta}]`;
+  }
+  return null;
+}
+
 /**
  * Extrae fechas de texto en varios formatos:
  * - DD-MM-YYYY / DD/MM/YYYY  → convierte a YYYY-MM-DD
@@ -160,6 +195,14 @@ async function procesarMensaje(texto) {
     return await ejecutarAccion(accion);
   }
 
+  // Detectar "ayer", "antier", "ayer y hoy", "antier a hoy" directamente
+  const tagRelativo = detectarFechaRelativa(texto);
+  if (tagRelativo) {
+    historial.push({ role: 'user', content: texto });
+    historial.push({ role: 'assistant', content: tagRelativo });
+    return await ejecutarAccion(tagRelativo);
+  }
+
   // Fix [REPORTE_RANGO]: si el bot estaba esperando fechas, extráelas directamente
   const ultimoBot = [...historial].reverse().find(h => h.role === 'assistant');
   if (ultimoBot && (ultimoBot.content.includes('REPORTE_RANGO') || ultimoBot.content.includes('rango de fechas'))) {
@@ -176,9 +219,12 @@ async function procesarMensaje(texto) {
   if (historial.length > 14) historial.shift();
 
   try {
+    const r = fechasRelativas();
+    const contextoFechas = `\n\nCONTEXTO ACTUAL: Hoy es ${r.hoy} (${new Date().toLocaleDateString('es-CO',{weekday:'long'})}). Ayer fue ${r.ayer}. Antier fue ${r.antier}. Esta semana va del lunes ${r.lunes} al ${r.hoy}.`;
+
     const resp = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...historial],
+      messages: [{ role: 'system', content: SYSTEM_PROMPT + contextoFechas }, ...historial],
       max_tokens: 500,
       temperature: 0.5,
     });
@@ -322,7 +368,10 @@ async function reportesMesAnterior() {
 async function reporteSemana() {
   const hoy = new Date();
   const lunes = new Date(hoy);
-  lunes.setDate(hoy.getDate() - hoy.getDay() + 1);
+  // getDay(): 0=domingo, 1=lunes, ..., 6=sábado
+  // Si es domingo (0) retroceder 6 días para llegar al lunes anterior
+  const diasDesdeElLunes = hoy.getDay() === 0 ? 6 : hoy.getDay() - 1;
+  lunes.setDate(hoy.getDate() - diasDesdeElLunes);
   const desde = lunes.toISOString().split('T')[0];
   const hasta = monitor.fechaHoy();
   return await reporteRango(desde, hasta, 'ESTA SEMANA');
