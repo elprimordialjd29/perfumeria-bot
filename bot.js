@@ -117,6 +117,10 @@ bot.on('message', async (msg) => {
       });
       await enviarMensaje(chatId, respuesta.caption || '📎 Archivo enviado.');
       try { fs.unlinkSync(respuesta.path); } catch(e) {}
+    } else if (respuesta && typeof respuesta === 'object' && respuesta.tipo === 'mensajes') {
+      for (const parte of respuesta.partes) {
+        await enviarMensaje(chatId, parte);
+      }
     } else {
       await enviarMensaje(chatId, respuesta);
     }

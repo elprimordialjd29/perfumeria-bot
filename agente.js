@@ -966,27 +966,36 @@ async function reporteVentasVsInventario() {
     const totalVendido = items.reduce((s, i) => s + i.valorMes, 0);
     const mes = new Date().toLocaleString('es-CO', { month: 'long', year: 'numeric' });
 
-    let msg = `📦 *VENTAS VS INVENTARIO — ${mes.toUpperCase()}*\n`;
-    msg += `_${monitor.fechaInicioMes()} → ${monitor.fechaHoy()}_\n\n`;
-
-    // Mostrar top 20 para no saturar el chat
-    const mostrar = items.slice(0, 20);
-    mostrar.forEach(item => {
+    // Construir líneas individuales
+    const lineas = [];
+    items.forEach(item => {
       const nivelStock = item.stock === null ? '❔' :
         item.stock <= 0  ? '🚨' : item.stock <= 5 ? '🔴' : item.stock <= 20 ? '🟡' : '🟢';
-      msg += `▪️ *${item.nombre}*\n`;
-      msg += `   📈 Vendido: ${item.vendidoMes} uds`;
-      if (item.valorMes > 0) msg += ` — $${item.valorMes.toLocaleString('es-CO')}`;
-      msg += `\n`;
-      if (item.stock !== null) {
-        msg += `   ${nivelStock} Stock: ${item.stock} ${item.medida}\n`;
-      }
+      let bloque = `▪️ *${item.nombre}*\n`;
+      bloque += `   📈 Vendido: ${item.vendidoMes} uds`;
+      if (item.valorMes > 0) bloque += ` — $${item.valorMes.toLocaleString('es-CO')}`;
+      bloque += `\n`;
+      if (item.stock !== null) bloque += `   ${nivelStock} Stock: ${item.stock} ${item.medida}\n`;
+      lineas.push(bloque);
     });
 
-    if (items.length > 20) msg += `\n_...y ${items.length - 20} productos más_\n`;
-    msg += `\n💰 *Total vendido: $${totalVendido.toLocaleString('es-CO')}*\n`;
-    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
-    return msg;
+    // Dividir en partes de máx 3500 chars
+    const encabezado = `📦 *VENTAS VS INVENTARIO — ${mes.toUpperCase()}*\n_${monitor.fechaInicioMes()} → ${monitor.fechaHoy()}_\n_(${items.length} productos)_\n\n`;
+    const pie = `\n💰 *Total vendido: $${totalVendido.toLocaleString('es-CO')}*\n─────────────────\n🤖 _VectorPOS — Chu_`;
+
+    const partes = [];
+    let parteActual = encabezado;
+    for (const linea of lineas) {
+      if ((parteActual + linea).length > 3500) {
+        partes.push(parteActual);
+        parteActual = `📦 _(continuación)_\n\n`;
+      }
+      parteActual += linea;
+    }
+    parteActual += pie;
+    partes.push(parteActual);
+
+    return { tipo: 'mensajes', partes };
   } catch(e) {
     console.error('Error ventas vs inventario:', e.message);
     return '❌ No pude generar el reporte. Intenta de nuevo.';
