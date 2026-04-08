@@ -534,23 +534,42 @@ async function reporteGeneral() {
       });
     }
 
-    // Inventario bajo
+    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+
+    // Inventario bajo — todos, dividido en partes separadas
+    const partesMsgs = [msg];
     try {
       const alertas = await monitor.consultarAlertasInventario();
-      const bajos = [...(alertas?.alertasGramos || []), ...(alertas?.alertasUnidades || [])].sort((a, b) => a.saldo - b.saldo);
-      if (bajos.length > 0) {
-        msg += `\n⚠️ *INVENTARIO BAJO (${bajos.length} productos)*\n`;
-        // En reporte general mostrar los primeros en el mismo mensaje
-        bajos.slice(0, 15).forEach(p => {
-          const nivel = p.saldo <= 0 ? '🚨' : p.saldo <= 5 ? '🔴' : '🟡';
-          msg += `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'uds'}\n`;
+      // Agotados primero (saldo=0), luego críticos, luego bajos
+      const bajos = [...(alertas?.alertasGramos || []), ...(alertas?.alertasUnidades || [])]
+        .sort((a, b) => {
+          if (a.saldo === 0 && b.saldo > 0) return -1;
+          if (b.saldo === 0 && a.saldo > 0) return 1;
+          return a.saldo - b.saldo;
         });
-        if (bajos.length > 15) msg += `_...y ${bajos.length - 15} más (escribe *I* para ver todos)_\n`;
-      } else { msg += `\n✅ *Inventario: sin alertas*\n`; }
-    } catch(e) { msg += `\n⚠️ _No pude verificar inventario_\n`; }
 
-    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
-    return msg;
+      if (bajos.length > 0) {
+        const agotados = bajos.filter(p => p.saldo <= 0);
+        const enc = `⚠️ *INVENTARIO BAJO (${bajos.length} productos)*\n` +
+          (agotados.length > 0 ? `🚨 *${agotados.length} AGOTADOS*\n` : '') + `\n`;
+        let parteInv = enc;
+        for (const p of bajos) {
+          const nivel = p.saldo <= 0 ? '🚨 AGOTADO' : p.saldo <= 5 ? '🔴 CRÍTICO' : '🟡 BAJO';
+          const linea = `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'uds'}\n`;
+          if ((parteInv + linea).length > 3500) {
+            partesMsgs.push(parteInv);
+            parteInv = `⚠️ _(inventario bajo — continuación)_\n\n`;
+          }
+          parteInv += linea;
+        }
+        partesMsgs.push(parteInv);
+      } else {
+        partesMsgs[0] += `\n✅ *Inventario: sin alertas*`;
+      }
+    } catch(e) { /* inventario opcional */ }
+
+    if (partesMsgs.length === 1) return partesMsgs[0];
+    return { tipo: 'mensajes', partes: partesMsgs };
   } catch(e) {
     console.error('Error reporte general:', e.message);
     return '❌ No pude generar el reporte general. Intenta de nuevo.';

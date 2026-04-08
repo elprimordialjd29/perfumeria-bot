@@ -137,7 +137,11 @@ async function enviarReporteMatutino() {
       const bajos = [
         ...(alertas?.alertasGramos   || []),
         ...(alertas?.alertasUnidades || []),
-      ].sort((a, b) => a.saldo - b.saldo); // más críticos primero
+      ].sort((a, b) => {
+        if (a.saldo === 0 && b.saldo > 0) return -1;
+        if (b.saldo === 0 && a.saldo > 0) return 1;
+        return a.saldo - b.saldo;
+      }); // agotados primero, luego críticos, luego bajos
 
       if (bajos.length === 0) {
         await notificar('✅ Inventario', `✅ *Inventario: sin alertas*\n_Todos los productos tienen stock suficiente_`);
