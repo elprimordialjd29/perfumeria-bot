@@ -395,17 +395,18 @@ async function extraerVentasProducto(page, fechaInicial, fechaFinal) {
 const APP_BASE = 'https://app.vectorpos.com.co';
 
 // ── Umbrales de alerta por categoría ──
-// ESENCIAS (M/F/U), REPLICA, ORIGINALES → alerta < 500g, crítico < 50g
-// ENVASE → alerta < 15 unidades
+// ESENCIAS (M/F/U) → ideal 500g, crítico ≤50g
+// REPLICA 1.1 / ORIGINALES → se venden por unidad; solo alertar si saldo = 0
+// ENVASE → ideal >50 u, crítico <10 u
 // INSUMOS VARIOS (alcohol) → alerta < 500, SIN restock
 // CREMA CORPORAL → alerta < 10
 const UMBRALES = {
   'ESENCIAS M':      { alerta: 500, critico: 50, medida: 'gr', restock: true  },
   'ESENCIAS F':      { alerta: 500, critico: 50, medida: 'gr', restock: true  },
   'ESENCIAS U':      { alerta: 500, critico: 50, medida: 'gr', restock: true  },
-  'REPLICA 1.1':     { alerta: 500, critico: 50, medida: 'gr', restock: true  },
-  'ORIGINALES':      { alerta: 500, critico: 50, medida: 'gr', restock: true  },
-  'ENVASE':          { alerta: 15,  critico: 5,  medida: 'u',  restock: true  },
+  'REPLICA 1.1':     { alerta: 1,   critico: 1,  medida: 'u',  restock: true  },
+  'ORIGINALES':      { alerta: 1,   critico: 1,  medida: 'u',  restock: true  },
+  'ENVASE':          { alerta: 50,  critico: 10, medida: 'u',  restock: true  },
   'INSUMOS VARIOS':  { alerta: 500, critico: 100, medida: 'u', restock: false },
   'CREMA CORPORAL':  { alerta: 10,  critico: 3,  medida: 'u',  restock: true  },
 };
@@ -564,6 +565,26 @@ async function _obtenerCatalogoProductos() {
   }
 }
 
+/**
+ * Infiere la categoría de un producto a partir de su nombre,
+ * cuando el catálogo del POS no provee esa información.
+ */
+function _inferirCategoria(nombre) {
+  const n = nombre.toLowerCase();
+  if (n.includes('original')) return 'ORIGINALES';
+  if (n.includes(' 1.1') || n.endsWith('1.1')) return 'REPLICA 1.1';
+  if (['crema','locion','loción','mantequilla','corporal','body'].some(k => n.includes(k))) return 'CREMA CORPORAL';
+  if (['alcohol','gramera','insumo','tapón','tapon'].some(k => n.includes(k))) return 'INSUMOS VARIOS';
+  const kwEnvase = [
+    'envase','tapa plana','singler','beirut','bomba','cartier','frasco',
+    'botella','perfumero','maletín','maletin','star w','venecia','roma ',
+    'paris ','london','empire','oval','redondo','cuadrado','roll on',
+    'rollon','atomizador','spray','dispensador',
+  ];
+  if (kwEnvase.some(kw => n.includes(kw))) return 'ENVASE';
+  return 'ESENCIAS'; // todo lo demás es esencia
+}
+
 /** Retorna TODOS los productos del inventario cruzando saldos + catálogo */
 async function consultarTodoInventario() {
   console.log('\n📦 Consultando inventario completo...');
@@ -606,7 +627,7 @@ async function consultarTodoInventario() {
       nombre,
       saldo,
       medida:      cat.medida    || p.Medida || '',
-      categoria:   cat.categoria || '',
+      categoria:   cat.categoria || _inferirCategoria(nombre),
       codigo:      p.Codigo || '',
       costoUnidad,
       costoTotal:  costoUnidad > 0 ? costoUnidad * saldo :
@@ -651,7 +672,6 @@ const KEYWORDS_CATEGORIA = {
     'frasco', 'botella', 'perfumero', 'maletín', 'maletin', 'star w', 'venecia',
     'roma ', 'paris ', 'london', 'empire', 'oval', 'redondo', 'cuadrado',
     'roll on', 'rollon', 'atomizador', 'spray', 'dispensador',
-    '5ml', '10ml', '15ml', '20ml', '30ml', '50ml', '60ml', '100ml',
   ],
   'INSUMOS VARIOS': [
     'alcohol', 'gramera', 'insumo', 'tapón', 'tapon', 'sello', 'etiqueta',
@@ -671,8 +691,8 @@ const KEYWORDS_CATEGORIA = {
 const _NO_ESENCIA = [
   'envase', 'tapa plana', 'singler', 'beirut', 'bomba', 'cartier', 'frasco', 'botella',
   'perfumero', 'maletín', 'maletin', 'star w', 'venecia', 'roma ', 'paris ', 'london',
-  'roll on', 'rollon', 'atomizador', 'spray', '5ml', '10ml', '15ml', '20ml', '30ml',
-  '50ml', '60ml', '100ml', 'alcohol', 'gramera', 'crema', 'locion', 'loción', 'mantequilla',
+  'roll on', 'rollon', 'atomizador', 'spray', 'dispensador',
+  'alcohol', 'gramera', 'crema', 'locion', 'loción', 'mantequilla',
   'corporal', 'caja', 'bolsa', 'etiqueta', 'original',
 ];
 
