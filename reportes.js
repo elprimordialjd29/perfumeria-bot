@@ -67,84 +67,104 @@ async function enviarReporteMatutino() {
     const hoy   = new Date();
     const ayer  = new Date(hoy); ayer.setDate(hoy.getDate() - 1);
     const fAyer = ayer.toISOString().split('T')[0];
-    const fHoy  = hoy.toISOString().split('T')[0];
-    const fMes  = monitor.fechaInicioMes();
     const meta  = parseInt(process.env.META_MENSUAL) || 10000000;
-
     const labelAyer = ayer.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' });
     const diasEnMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
     const diasRestantes = Math.max(1, diasEnMes - hoy.getDate());
     const metaDiaria = Math.round(meta / diasEnMes);
+    const medallas = ['🥇', '🥈', '🥉'];
 
-    // 1. Ventas de ayer
-    const { browser, page } = await monitor.crearSesionPOS();
-    const cajerosAyer = await monitor.extraerVentasCajero(page, fAyer, fAyer);
-    const cajerosMes  = await monitor.extraerVentasCajero(page, fMes, fAyer);
-    await browser.close();
+    // ── 1. Ventas de ayer (sesión propia) ──
+    const { browser: b1, page: p1 } = await monitor.crearSesionPOS();
+    const cajerosAyer = await monitor.extraerVentasCajero(p1, fAyer, fAyer);
+    await b1.close();
 
-    const totalAyer = cajerosAyer.reduce((s, c) => s + c.total, 0);
+    const totalAyer   = cajerosAyer.reduce((s, c) => s + c.total,   0);
     const ticketsAyer = cajerosAyer.reduce((s, c) => s + c.tickets, 0);
-    const totalMes  = cajerosMes.reduce((s, c) => s + c.total, 0);
+
+    // ── 2. Avance del mes (función validada) ──
+    const datosMes = await monitor.monitorearVentasDiarias();
+    const totalMes  = datosMes?.totalMes  || 0;
+    const cajerosMes = datosMes?.cajerosMes || [];
     const faltaMeta = Math.max(0, meta - totalMes);
     const pctMeta   = ((totalMes / meta) * 100).toFixed(1);
     const promNecesario = Math.round(faltaMeta / diasRestantes);
-
     const barra = Math.min(Math.round(Number(pctMeta) / 10), 10);
     const progreso = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
-    const medallas = ['🥇', '🥈', '🥉'];
 
-    let msg = `🌅 *BUENOS DÍAS — ${hoy.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }).toUpperCase()}*\n\n`;
+    const encabezado = `🌅 *BUENOS DÍAS — ${hoy.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }).toUpperCase()}*`;
 
-    // Bloque ayer
-    msg += `📅 *VENTAS DE AYER (${labelAyer.toUpperCase()})*\n`;
-    msg += `💰 Total: *$${totalAyer.toLocaleString('es-CO')}* | 🎫 ${ticketsAyer} tickets\n`;
+    // Mensaje 1: ayer + mes
+    let msg1 = `${encabezado}\n\n`;
+    msg1 += `📅 *VENTAS DE AYER (${labelAyer.toUpperCase()})*\n`;
+    msg1 += `💰 Total: *$${totalAyer.toLocaleString('es-CO')}* | 🎫 ${ticketsAyer} tickets\n`;
     if (totalAyer > 0 && ticketsAyer > 0) {
-      msg += `💵 Promedio ticket: $${Math.round(totalAyer / ticketsAyer).toLocaleString('es-CO')}\n`;
+      msg1 += `💵 Promedio ticket: $${Math.round(totalAyer / ticketsAyer).toLocaleString('es-CO')}\n`;
     }
     if (cajerosAyer.length > 0) {
-      msg += `👥 Cajeros:\n`;
+      msg1 += `👥 Cajeros:\n`;
       cajerosAyer.forEach((c, i) => {
-        msg += `   ${medallas[i] || `${i+1}.`} *${c.cajero}*: $${c.total.toLocaleString('es-CO')} (${c.tickets} tkt)\n`;
+        msg1 += `   ${medallas[i] || `${i+1}.`} *${c.cajero}*: $${c.total.toLocaleString('es-CO')} (${c.tickets} tkt)\n`;
       });
     } else {
-      msg += `_Sin ventas registradas ayer_\n`;
+      msg1 += `_Sin ventas registradas ayer_\n`;
     }
 
-    // Bloque mes
-    msg += `\n📊 *AVANCE DEL MES*\n`;
-    msg += `${progreso} ${pctMeta}%\n`;
-    msg += `💰 Vendido: *$${totalMes.toLocaleString('es-CO')}* / $${meta.toLocaleString('es-CO')}\n`;
+    msg1 += `\n📊 *AVANCE DEL MES*\n`;
+    msg1 += `${progreso} ${pctMeta}%\n`;
+    msg1 += `💰 Vendido: *$${totalMes.toLocaleString('es-CO')}* / $${meta.toLocaleString('es-CO')}\n`;
     if (faltaMeta > 0) {
-      msg += `📉 Falta: *$${faltaMeta.toLocaleString('es-CO')}*\n`;
-      msg += `📌 Necesario/día: $${promNecesario.toLocaleString('es-CO')} | Meta/día: $${metaDiaria.toLocaleString('es-CO')}\n`;
-      msg += `📆 Días restantes: ${diasRestantes}\n`;
+      msg1 += `📉 Falta: *$${faltaMeta.toLocaleString('es-CO')}*\n`;
+      msg1 += `📌 Necesario/día: $${promNecesario.toLocaleString('es-CO')} | Meta/día: $${metaDiaria.toLocaleString('es-CO')}\n`;
+      msg1 += `📆 Días restantes: ${diasRestantes}\n`;
     } else {
-      msg += `🏆 *¡META DEL MES CUMPLIDA!*\n`;
+      msg1 += `🏆 *¡META DEL MES CUMPLIDA!*\n`;
+    }
+    if (cajerosMes.length > 0) {
+      const totalGen = cajerosMes.reduce((s,c) => s + c.total, 0);
+      msg1 += `\n👥 *Ranking del mes:*\n`;
+      cajerosMes.forEach((c, i) => {
+        const pct = totalGen > 0 ? ((c.total / totalGen)*100).toFixed(0) : 0;
+        msg1 += `   ${medallas[i] || `${i+1}.`} *${c.cajero}*: $${c.total.toLocaleString('es-CO')} (${pct}%)\n`;
+      });
     }
 
-    // Bloque inventario bajo
+    await notificar('🌅 Reporte Matutino', msg1);
+
+    // ── 3. Inventario bajo — todos, dividido en partes ──
     try {
       const alertas = await monitor.consultarAlertasInventario();
       const bajos = [
         ...(alertas?.alertasGramos   || []),
         ...(alertas?.alertasUnidades || []),
-      ];
-      if (bajos.length > 0) {
-        msg += `\n⚠️ *INVENTARIO BAJO (${bajos.length} productos)*\n`;
-        bajos.slice(0, 10).forEach(p => {
-          const nivel = p.saldo <= 0 ? '🚨 AGOTADO' : p.saldo <= 5 ? '🔴 CRÍTICO' : '🟡 BAJO';
-          msg += `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'uds'}\n`;
-        });
-        if (bajos.length > 10) msg += `_...y ${bajos.length - 10} más_\n`;
-      } else {
-        msg += `\n✅ *Inventario: sin alertas*\n`;
+      ].sort((a, b) => a.saldo - b.saldo); // más críticos primero
+
+      if (bajos.length === 0) {
+        await notificar('✅ Inventario', `✅ *Inventario: sin alertas*\n_Todos los productos tienen stock suficiente_`);
+        return;
+      }
+
+      // Dividir en partes de ~3000 chars
+      const encInv = `⚠️ *INVENTARIO BAJO (${bajos.length} productos)*\n\n`;
+      const partes = [];
+      let parteActual = encInv;
+      for (const p of bajos) {
+        const nivel = p.saldo <= 0 ? '🚨 AGOTADO' : p.saldo <= 5 ? '🔴 CRÍTICO' : '🟡 BAJO';
+        const linea = `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'uds'}\n`;
+        if ((parteActual + linea).length > 3000) {
+          partes.push(parteActual);
+          parteActual = `⚠️ _(inventario bajo — continuación)_\n\n`;
+        }
+        parteActual += linea;
+      }
+      partes.push(parteActual + `\n─────────────────\n🤖 _Reporte automático — Chu_`);
+
+      for (const parte of partes) {
+        await notificar('⚠️ Inventario Bajo', parte);
       }
     } catch(e) {
-      msg += `\n⚠️ _No pude verificar el inventario_\n`;
+      console.error('Error inventario matutino:', e.message);
     }
-
-    msg += `\n─────────────────\n🤖 _Reporte automático — Chu_`;
-    await notificar('🌅 Reporte Matutino', msg);
 
   } catch(e) {
     console.error('Error reporte matutino:', e.message);
