@@ -76,9 +76,15 @@ Responde directamente SOLO para:
 ━━━ EJEMPLOS CORRECTOS ━━━
 "qué perfumes tenemos en inventario" → [INVENTARIO]
 "ventas vs inventario de todo" → [VENTAS_INVENTARIO]
+"dame el estado del inventario" → [VENTAS_INVENTARIO]
+"estado del inventario" → [VENTAS_INVENTARIO]
 "cuántas unidades de Lattafa quedan" → [CRUCE_PRODUCTO:lattafa]
 "tapa plana de 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml]
 "single color" → [CRUCE_PRODUCTO:singler color]
+"dame el estado de singler color" → [CRUCE_PRODUCTO:singler color]
+"dame el estado de envase singler" → [CRUCE_PRODUCTO:singler]
+"estado de tapa plana 50ml" → [CRUCE_PRODUCTO:tapa plana 50ml]
+"cómo va la singler color" → [CRUCE_PRODUCTO:singler color]
 "cuánto alcohol queda" → [CRUCE_PRODUCTO:alcohol]
 "originales cuántos quedan y cuántos se vendieron" → [CRUCE_PRODUCTO:original]
 "tapa plana 50ml vendido y stock" → [CRUCE_PRODUCTO:tapa plana 50ml]
@@ -86,6 +92,8 @@ Responde directamente SOLO para:
 "cuánto se vendió de tapa plana 50ml la semana pasada" → [CRUCE_PRODUCTO_RANGO:tapa plana 50ml:LUNES:HOY]
 "lattafa el mes pasado" → [CRUCE_PRODUCTO_RANGO:lattafa:INICIO_MES_ANT:FIN_MES_ANT]
 "singler color esta semana" → [CRUCE_PRODUCTO_RANGO:singler color:LUNES:HOY]
+"estado de singler color ayer" → [CRUCE_PRODUCTO_RANGO:singler color:AYER:AYER]
+"cómo va la tapa plana esta semana" → [CRUCE_PRODUCTO_RANGO:tapa plana:LUNES:HOY]
 "qué se vendió más este mes" → [PRODUCTOS_MES]
 "ventas de hoy" → [REPORTE_HOY]
 "gastos del mes" → [GASTOS]
@@ -128,6 +136,8 @@ const MENU_ACCIONES = {
   'E': '[EXPORTAR_EXCEL]',
   'v': '[VER_REQS]',
   'V': '[VER_REQS]',
+  'i': '[VENTAS_INVENTARIO]',
+  'I': '[VENTAS_INVENTARIO]',
 };
 
 /** Retorna objeto con fechas de referencia relativas */
@@ -1284,6 +1294,7 @@ function mensajeMenu() {
     `8️⃣ Ranking cajeros del mes (con desglose por día)\n` +
     `9️⃣ Alertas de inventario\n` +
     `0️⃣ Ventas por rango de fechas\n` +
+    `📦 *I* — Estado del inventario (ventas vs stock)\n` +
     `🇷 *R* — Crear requerimiento nuevo\n` +
     `🇻 *V* — Ver requerimientos\n` +
     `📊 *E* — Exportar reporte en Excel\n\n` +
