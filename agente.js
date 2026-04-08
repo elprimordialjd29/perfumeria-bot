@@ -1156,7 +1156,13 @@ async function reporteInventarioCategoria(categoria) {
       parte += l;
     }
 
-    if (normales.length > 0) parte += `\n✅ *${normales.length} productos OK* (sobre el mínimo)\n`;
+    if (normales.length > 0) {
+      parte += `\n✅ *${normales.length} productos OK (sobre el mínimo):*\n`;
+      normales.forEach(p => {
+        parte += `🟢 *${p.nombre}*: ${p.saldo} ${p.medida}\n`;
+        if ((parte).length > 3500) { partes.push(parte); parte = `📦 _(productos OK — continuación)_\n\n`; }
+      });
+    }
     if (umbral.restock && totalRestock > 0) parte += `\n💰 *Inversión estimada: $${fp(totalRestock)}*\n`;
     parte += `─────────────────\n🤖 _VectorPOS — Chu_`;
     partes.push(parte);

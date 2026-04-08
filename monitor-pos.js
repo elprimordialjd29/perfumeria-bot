@@ -646,12 +646,21 @@ async function consultarAlertasInventario() {
 
 // Palabras clave por categoría para filtrar por nombre cuando no hay categoría asignada
 const KEYWORDS_CATEGORIA = {
-  'ENVASE':         ['envase', 'tapa plana', 'singler', 'beirut', 'bomba', 'cartier', 'frasco', 'botella', 'perfumero', 'maletín', 'maletin'],
-  'INSUMOS VARIOS': ['alcohol', 'gramera', 'insumo', 'tapón', 'tapon', 'sello', 'etiqueta', 'caja', 'bolsa'],
-  'CREMA CORPORAL': ['crema', 'loción', 'locion', 'mantequilla', 'corporal'],
-  'ESENCIAS M':     ['esencia', 'fragancia', 'perfume'],
-  'ESENCIAS F':     ['esencia', 'fragancia', 'perfume'],
-  'ESENCIAS U':     ['esencia', 'fragancia', 'perfume'],
+  'ENVASE': [
+    'envase', 'tapa plana', 'singler', 'singler color', 'beirut', 'bomba', 'cartier',
+    'frasco', 'botella', 'perfumero', 'maletín', 'maletin', 'star w', 'venecia',
+    'roma ', 'paris ', 'london', 'empire', 'oval', 'redondo', 'cuadrado',
+    'roll on', 'rollon', 'atomizador', 'spray', 'dispensador',
+    '5ml', '10ml', '15ml', '20ml', '30ml', '50ml', '60ml', '100ml',
+  ],
+  'INSUMOS VARIOS': [
+    'alcohol', 'gramera', 'insumo', 'tapón', 'tapon', 'sello', 'etiqueta',
+    'caja', 'bolsa', 'papel', 'cinta', 'precinto', 'tubo', 'pipeta',
+  ],
+  'CREMA CORPORAL': ['crema', 'loción', 'locion', 'mantequilla', 'corporal', 'body'],
+  'ESENCIAS M':     [],  // sin keywords — depende de categoría
+  'ESENCIAS F':     [],
+  'ESENCIAS U':     [],
   'REPLICA 1.1':    ['1.1', 'replica', 'réplica'],
   'ORIGINALES':     ['original'],
 };
