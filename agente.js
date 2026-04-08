@@ -42,6 +42,11 @@ Inventar datos confunde al dueño y destruye la confianza. Si no hay etiqueta di
 [RANKING_MES]       → ranking cajeros mes
 [INVENTARIO]        → inventario general, stock total, alertas de productos bajos, qué falta
 [CRUCE_PRODUCTO:texto] → consulta cruzada ventas+inventario de UN producto o categoría específica. Extrae el término clave. Ej: "cuánto queda de tapa plana 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml] | "alcohol" → [CRUCE_PRODUCTO:alcohol] | "single color" → [CRUCE_PRODUCTO:singler color] | "originales" → [CRUCE_PRODUCTO:original] | "cuánto se vendió de Lattafa Asad y cuánto queda" → [CRUCE_PRODUCTO:lattafa asad] | "tapa plana 50ml" → [CRUCE_PRODUCTO:tapa plana 50ml]
+[CAJERO_HOY:nombre]              → cuánto vendió [nombre] hoy. Ej: "cuánto vendió Michelle hoy" → [CAJERO_HOY:michelle]
+[CAJERO_SEM:nombre]              → cuánto vendió [nombre] esta semana. Ej: "cuánto vendió Moisés esta semana" → [CAJERO_SEM:moises]
+[CAJERO_MES:nombre]              → cuánto vendió [nombre] este mes. Ej: "ventas de Laura este mes" → [CAJERO_MES:laura]
+[CAJERO_MES_ANT:nombre]         → cuánto vendió [nombre] el mes pasado. Ej: "cuánto vendió Moisés el mes pasado" → [CAJERO_MES_ANT:moises]
+[CAJERO_RANGO:nombre:YYYY-MM-DD:YYYY-MM-DD] → cuánto vendió [nombre] en un rango. Ej: "ventas de Michelle del 1 al 7 de abril" → [CAJERO_RANGO:michelle:2026-04-01:2026-04-07]
 [GASTOS]            → gastos, egresos, nómina
 [CAJA]              → cierres de caja, turnos
 [VENTAS_HORA]       → ventas por hora, hora pico
@@ -71,7 +76,12 @@ Responde directamente SOLO para:
 "gastos del mes" → [GASTOS]
 "cuál es el mejor perfume árabe" → (responde con conocimiento, sin inventar stock)
 "hola" → [MENU]
-"ventas del 1 al 7 de abril" → [REPORTE_RANGO:2026-04-01:2026-04-07]`;
+"ventas del 1 al 7 de abril" → [REPORTE_RANGO:2026-04-01:2026-04-07]
+"cuánto vendió Michelle hoy" → [CAJERO_HOY:michelle]
+"cuánto vendió Moisés esta semana" → [CAJERO_SEM:moises]
+"ventas de Laura este mes" → [CAJERO_MES:laura]
+"cuánto vendió Moisés el mes pasado" → [CAJERO_MES_ANT:moises]
+"ventas de Michelle del 1 al 7 de abril" → [CAJERO_RANGO:michelle:2026-04-01:2026-04-07]`;
 
 // ──────────────────────────────────────────────
 // FUNCIÓN PRINCIPAL
@@ -324,6 +334,39 @@ async function ejecutarAccion(raw) {
       return await reporteVentasPorHora(monitor.fechaHoy(), monitor.fechaHoy(), 'HOY');
     }
 
+    if (raw.startsWith('[CAJERO_HOY:')) {
+      const nombre = raw.match(/\[CAJERO_HOY:([^\]]+)\]/)?.[1]?.trim();
+      return await reporteCajeroIndividual(nombre, monitor.fechaHoy(), monitor.fechaHoy(), 'HOY');
+    }
+
+    if (raw.startsWith('[CAJERO_SEM:')) {
+      const nombre = raw.match(/\[CAJERO_SEM:([^\]]+)\]/)?.[1]?.trim();
+      const hoy = new Date();
+      const diasDesdeElLunes = hoy.getDay() === 0 ? 6 : hoy.getDay() - 1;
+      const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - diasDesdeElLunes);
+      return await reporteCajeroIndividual(nombre, lunes.toISOString().split('T')[0], monitor.fechaHoy(), 'ESTA SEMANA');
+    }
+
+    if (raw.startsWith('[CAJERO_MES:')) {
+      const nombre = raw.match(/\[CAJERO_MES:([^\]]+)\]/)?.[1]?.trim();
+      return await reporteCajeroIndividual(nombre, monitor.fechaInicioMes(), monitor.fechaHoy(), 'ESTE MES');
+    }
+
+    if (raw.startsWith('[CAJERO_MES_ANT:')) {
+      const nombre = raw.match(/\[CAJERO_MES_ANT:([^\]]+)\]/)?.[1]?.trim();
+      const hoy = new Date();
+      const primerDia = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
+      const ultimoDia = new Date(hoy.getFullYear(), hoy.getMonth(), 0);
+      const mes = primerDia.toLocaleString('es-CO', { month: 'long', year: 'numeric' });
+      return await reporteCajeroIndividual(nombre, primerDia.toISOString().split('T')[0], ultimoDia.toISOString().split('T')[0], `MES ANTERIOR — ${mes.toUpperCase()}`);
+    }
+
+    if (raw.startsWith('[CAJERO_RANGO:')) {
+      const match = raw.match(/\[CAJERO_RANGO:([^:]+):(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})\]/);
+      if (match) return await reporteCajeroIndividual(match[1].trim(), match[2], match[3], `${match[2]} → ${match[3]}`);
+      return '📅 No entendí el rango. Ejemplo: _"ventas de Michelle del 1 al 7 de abril"_';
+    }
+
     if (raw.startsWith('[CRUCE_PRODUCTO:')) {
       const match = raw.match(/\[CRUCE_PRODUCTO:([^\]]+)\]/);
       const query = match ? match[1].trim() : raw.replace('[CRUCE_PRODUCTO:', '').replace(']', '').trim();
@@ -415,6 +458,44 @@ async function reporteRango(desde, hasta, titulo) {
   } catch (e) {
     console.error('Error reporte rango:', e.message);
     return '❌ No pude generar el reporte. Verifica la conexión a VectorPOS.';
+  }
+}
+
+async function reporteCajeroIndividual(nombre, desde, hasta, titulo) {
+  if (!nombre) return '❌ No entendí el nombre del cajero.';
+  try {
+    const { browser, page } = await monitor.crearSesionPOS();
+    const cajeros = await monitor.extraerVentasCajero(page, desde, hasta);
+    await browser.close();
+
+    // Buscar por nombre parcial (insensible a mayúsculas/tildes)
+    const normalizar = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const busqueda = normalizar(nombre);
+    const encontrado = cajeros.find(c => normalizar(c.cajero).includes(busqueda));
+
+    if (!encontrado) {
+      const lista = cajeros.map(c => `• ${c.cajero}`).join('\n');
+      return `❌ No encontré a *${nombre}* en el período.\n\nCajeros con actividad:\n${lista || 'Ninguno'}`;
+    }
+
+    const totalPeriodo = cajeros.reduce((s, c) => s + c.total, 0);
+    const pct = totalPeriodo > 0 ? ((encontrado.total / totalPeriodo) * 100).toFixed(1) : 0;
+    const promTicket = encontrado.tickets > 0 ? Math.round(encontrado.total / encontrado.tickets) : 0;
+
+    let msg = `👤 *${encontrado.cajero} — ${titulo}*\n`;
+    msg += `_${desde} → ${hasta}_\n\n`;
+    msg += `💰 *Total vendido: $${encontrado.total.toLocaleString('es-CO')}*\n`;
+    msg += `🎫 Tickets: ${encontrado.tickets}\n`;
+    if (promTicket > 0) msg += `💵 Promedio ticket: $${promTicket.toLocaleString('es-CO')}\n`;
+    msg += `📊 Participación: ${pct}% del total del negocio\n`;
+    if (encontrado.efectivo > 0)    msg += `\n💵 Efectivo: $${encontrado.efectivo.toLocaleString('es-CO')}`;
+    if (encontrado.bancolombia > 0) msg += `\n🏦 Bancolombia: $${encontrado.bancolombia.toLocaleString('es-CO')}`;
+    if (encontrado.nequi > 0)       msg += `\n📱 Nequi: $${encontrado.nequi.toLocaleString('es-CO')}`;
+    msg += `\n\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch (e) {
+    console.error('Error cajero individual:', e.message);
+    return '❌ No pude consultar los datos. Intenta de nuevo.';
   }
 }
 
