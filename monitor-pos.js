@@ -343,22 +343,23 @@ const APP_BASE = 'https://app.vectorpos.com.co';
 const LIMITE_GRAMOS = 50;
 const LIMITE_UNIDADES = 20;
 
-async function consultarAlertasInventario() {
-  console.log('\n📦 Consultando inventario VectorPOS...');
+/**
+ * Función base: hace login en app.vectorpos.com.co y retorna
+ * el array crudo de productos del kardex/saldos.
+ * Reutilizada por consultarAlertasInventario y consultarTodoInventario.
+ */
+async function _obtenerSaldosBrutos() {
   const user = process.env.VECTORPOS_USER;
   const pass = process.env.VECTORPOS_PASS;
-
   let browser = null;
   try {
     browser = await puppeteer.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
     });
-
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
 
-    // Capturar respuesta de la API de saldos
     let saldosData = null;
     page.on('response', async res => {
       if (res.url().includes('kardex/saldos')) {
@@ -366,7 +367,6 @@ async function consultarAlertasInventario() {
       }
     });
 
-    // Login
     await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'networkidle0', timeout: 30000 });
     await page.type('#txtEmail', user, { delay: 30 });
     await page.type('#txtClave', pass, { delay: 30 });
@@ -375,7 +375,6 @@ async function consultarAlertasInventario() {
       page.click('#btnEntrar'),
     ]);
 
-    // Seleccionar sucursal si aparece
     if (page.url().includes('cambioSucursal')) {
       await Promise.all([
         page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
@@ -383,14 +382,12 @@ async function consultarAlertasInventario() {
       ]);
     }
 
-    // Navegar a Consultar Saldos
     await page.evaluate(() => {
       const link = [...document.querySelectorAll('a')].find(a => a.innerText.trim() === 'Consultar Saldos');
       if (link) link.click();
     });
     await new Promise(r => setTimeout(r, 2000));
 
-    // Cargar lista
     await page.evaluate(() => {
       const btn = document.querySelector('#btnCargar');
       if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -400,47 +397,55 @@ async function consultarAlertasInventario() {
     await browser.close();
     browser = null;
 
-    if (!saldosData?.datos?.length) {
-      return { alertasGramos: [], alertasUnidades: [], total: 0 };
-    }
-
-    const productos = saldosData.datos;
-    console.log(`✅ ${productos.length} productos cargados`);
-
-    // Alerta 1: Gramos < 50
-    const alertasGramos = productos
-      .filter(p => {
-        const medida = (p.Medida || '').toLowerCase();
-        const saldo = parseFloat(p['Saldo Actual']) || 0;
-        return medida === 'gramos' && saldo < LIMITE_GRAMOS;
-      })
-      .map(p => ({ nombre: p.Nombre, saldo: parseFloat(p['Saldo Actual']), medida: p.Medida }))
-      .sort((a, b) => a.saldo - b.saldo);
-
-    // Alerta 2: Unidades < 20 (excluyendo "original")
-    const alertasUnidades = productos
-      .filter(p => {
-        const medida = (p.Medida || '').toLowerCase();
-        const nombre = (p.Nombre || '').toLowerCase();
-        const saldo = parseFloat(p['Saldo Actual']) || 0;
-        return medida === 'unidad' && !nombre.includes('original') && saldo < LIMITE_UNIDADES;
-      })
-      .map(p => ({ nombre: p.Nombre, saldo: parseFloat(p['Saldo Actual']), medida: p.Medida }))
-      .sort((a, b) => a.saldo - b.saldo);
-
-    console.log(`⚠️  Alertas gramos: ${alertasGramos.length} | Alertas unidades: ${alertasUnidades.length}`);
-
-    return {
-      alertasGramos,
-      alertasUnidades,
-      total: productos.length,
-    };
-
+    return saldosData?.datos?.length ? saldosData.datos : [];
   } catch (e) {
-    console.error('❌ Error consultando inventario:', e.message);
+    console.error('❌ Error obteniendo saldos inventario:', e.message);
     if (browser) await browser.close();
     return null;
   }
+}
+
+/** Retorna TODOS los productos del inventario (sin filtrar) */
+async function consultarTodoInventario() {
+  console.log('\n📦 Consultando inventario completo...');
+  const datos = await _obtenerSaldosBrutos();
+  if (!datos) return null;
+  console.log(`✅ ${datos.length} productos en inventario`);
+  return datos.map(p => ({
+    nombre:  p.Nombre || '',
+    saldo:   parseFloat(p['Saldo Actual']) || 0,
+    medida:  p.Medida || '',
+    codigo:  p.Codigo || '',
+  }));
+}
+
+async function consultarAlertasInventario() {
+  console.log('\n📦 Consultando alertas inventario...');
+  const productos = await _obtenerSaldosBrutos();
+  if (!productos) return null;
+  console.log(`✅ ${productos.length} productos cargados`);
+
+  const alertasGramos = productos
+    .filter(p => {
+      const medida = (p.Medida || '').toLowerCase();
+      const saldo = parseFloat(p['Saldo Actual']) || 0;
+      return medida === 'gramos' && saldo < LIMITE_GRAMOS;
+    })
+    .map(p => ({ nombre: p.Nombre, saldo: parseFloat(p['Saldo Actual']), medida: p.Medida }))
+    .sort((a, b) => a.saldo - b.saldo);
+
+  const alertasUnidades = productos
+    .filter(p => {
+      const medida = (p.Medida || '').toLowerCase();
+      const nombre = (p.Nombre || '').toLowerCase();
+      const saldo = parseFloat(p['Saldo Actual']) || 0;
+      return medida === 'unidad' && !nombre.includes('original') && saldo < LIMITE_UNIDADES;
+    })
+    .map(p => ({ nombre: p.Nombre, saldo: parseFloat(p['Saldo Actual']), medida: p.Medida }))
+    .sort((a, b) => a.saldo - b.saldo);
+
+  console.log(`⚠️  Alertas gramos: ${alertasGramos.length} | Alertas unidades: ${alertasUnidades.length}`);
+  return { alertasGramos, alertasUnidades, total: productos.length };
 }
 
 function generarMensajeAlertas(resultado) {
@@ -582,6 +587,7 @@ module.exports = {
   monitorearVentasDiarias,
   generarMensajeMeta,
   consultarAlertasInventario,
+  consultarTodoInventario,
   generarMensajeAlertas,
   crearSesionPOS,
   extraerVentasGenerales,

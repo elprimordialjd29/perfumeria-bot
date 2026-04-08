@@ -40,7 +40,8 @@ Inventar datos confunde al dueño y destruye la confianza. Si no hay etiqueta di
 [RANKING_HOY]       → ranking cajeros hoy
 [RANKING_SEM]       → ranking cajeros semana
 [RANKING_MES]       → ranking cajeros mes
-[INVENTARIO]        → inventario, stock, cuántas unidades hay, qué falta, cuántos frascos quedan, productos bajos
+[INVENTARIO]        → inventario general, stock total, alertas de productos bajos, qué falta
+[CRUCE_PRODUCTO:texto] → consulta cruzada ventas+inventario de UN producto o categoría específica. Extrae el término clave. Ej: "cuánto queda de tapa plana 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml] | "alcohol" → [CRUCE_PRODUCTO:alcohol] | "single color" → [CRUCE_PRODUCTO:singler color] | "originales" → [CRUCE_PRODUCTO:original] | "cuánto se vendió de Lattafa Asad y cuánto queda" → [CRUCE_PRODUCTO:lattafa asad] | "tapa plana 50ml" → [CRUCE_PRODUCTO:tapa plana 50ml]
 [GASTOS]            → gastos, egresos, nómina
 [CAJA]              → cierres de caja, turnos
 [VENTAS_HORA]       → ventas por hora, hora pico
@@ -59,7 +60,12 @@ Responde directamente SOLO para:
 
 ━━━ EJEMPLOS CORRECTOS ━━━
 "qué perfumes tenemos en inventario" → [INVENTARIO]
-"cuántas unidades de Lattafa quedan" → [INVENTARIO]
+"cuántas unidades de Lattafa quedan" → [CRUCE_PRODUCTO:lattafa]
+"tapa plana de 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml]
+"single color" → [CRUCE_PRODUCTO:singler color]
+"cuánto alcohol queda" → [CRUCE_PRODUCTO:alcohol]
+"originales cuántos quedan y cuántos se vendieron" → [CRUCE_PRODUCTO:original]
+"tapa plana 50ml vendido y stock" → [CRUCE_PRODUCTO:tapa plana 50ml]
 "qué se vendió más este mes" → [PRODUCTOS_MES]
 "ventas de hoy" → [REPORTE_HOY]
 "gastos del mes" → [GASTOS]
@@ -270,6 +276,12 @@ async function ejecutarAccion(raw) {
 
     if (raw.startsWith('[VENTAS_HORA]')) {
       return await reporteVentasPorHora(monitor.fechaHoy(), monitor.fechaHoy(), 'HOY');
+    }
+
+    if (raw.startsWith('[CRUCE_PRODUCTO:')) {
+      const match = raw.match(/\[CRUCE_PRODUCTO:([^\]]+)\]/);
+      const query = match ? match[1].trim() : raw.replace('[CRUCE_PRODUCTO:', '').replace(']', '').trim();
+      return await cruzarProducto(query);
     }
 
     if (raw.startsWith('[REQUERIMIENTO]')) {
@@ -632,6 +644,98 @@ async function reporteVentasPorHora(desde, hasta, titulo) {
   } catch (e) {
     console.error('Error ventas hora:', e.message);
     return '❌ No pude consultar las ventas por hora.';
+  }
+}
+
+// ──────────────────────────────────────────────
+// CRUCE VENTAS + INVENTARIO por producto/categoría
+// ──────────────────────────────────────────────
+
+async function cruzarProducto(query) {
+  const palabras = query.toLowerCase().trim().split(/\s+/).filter(p => p.length > 1);
+
+  function coincide(nombre) {
+    const n = nombre.toLowerCase();
+    return palabras.every(p => n.includes(p));
+  }
+
+  try {
+    // Ejecutar secuencialmente para no saturar memoria en Railway
+    // 1. Inventario completo (app.vectorpos.com.co)
+    const inventario = await monitor.consultarTodoInventario() || [];
+
+    // 2. Ventas del mes (pos.vectorpos.com.co)
+    const { browser, page } = await monitor.crearSesionPOS();
+    const ventasMes = await monitor.extraerVentasProducto(page, monitor.fechaInicioMes(), monitor.fechaHoy());
+    const ventasHoy = await monitor.extraerVentasProducto(page, monitor.fechaHoy(), monitor.fechaHoy());
+    await browser.close();
+
+    // Filtrar por query
+    const invFiltrado   = inventario.filter(p => coincide(p.nombre));
+    const ventasFiltMes = ventasMes.filter(p  => coincide(p.nombre));
+    const ventasFiltHoy = ventasHoy.filter(p  => coincide(p.nombre));
+
+    if (!invFiltrado.length && !ventasFiltMes.length) {
+      return `🔍 No encontré _"${query}"_ en inventario ni en ventas del mes.\n\nVerifica el nombre exacto o intenta con un término más corto (ej: "lattafa", "tapa plana", "alcohol").`;
+    }
+
+    // Construir mapa unificado: nombre → { stock, medida, vendidoMes, valorMes, vendidoHoy }
+    const mapa = {};
+
+    invFiltrado.forEach(p => {
+      if (!mapa[p.nombre]) mapa[p.nombre] = { nombre: p.nombre, stock: 0, medida: '', vendidoMes: 0, valorMes: 0, vendidoHoy: 0 };
+      mapa[p.nombre].stock  = p.saldo;
+      mapa[p.nombre].medida = p.medida;
+    });
+
+    ventasFiltMes.forEach(p => {
+      if (!mapa[p.nombre]) mapa[p.nombre] = { nombre: p.nombre, stock: null, medida: '', vendidoMes: 0, valorMes: 0, vendidoHoy: 0 };
+      mapa[p.nombre].vendidoMes = p.cantidad;
+      mapa[p.nombre].valorMes   = p.valor;
+    });
+
+    ventasFiltHoy.forEach(p => {
+      if (mapa[p.nombre]) mapa[p.nombre].vendidoHoy = p.cantidad;
+    });
+
+    const items = Object.values(mapa).sort((a, b) => (b.vendidoMes - a.vendidoMes) || (b.stock - a.stock));
+
+    let msg = `🔍 *ANÁLISIS — "${query.toUpperCase()}"*\n`;
+    msg += `_Ventas del mes + stock actual_\n\n`;
+
+    items.forEach(item => {
+      const nivelStock = item.stock === null ? '' :
+        item.stock <= 0    ? ' 🚨 *AGOTADO*' :
+        item.stock <= 5    ? ' 🔴 CRÍTICO' :
+        item.stock <= 20   ? ' 🟡 BAJO' : ' 🟢';
+
+      msg += `📦 *${item.nombre}*\n`;
+
+      if (item.stock !== null) {
+        msg += `   📦 Stock: *${item.stock} ${item.medida}*${nivelStock}\n`;
+      } else {
+        msg += `   📦 Stock: sin datos\n`;
+      }
+
+      if (item.vendidoMes > 0) {
+        msg += `   📈 Vendido (mes): ${item.vendidoMes} uds — $${item.valorMes.toLocaleString('es-CO')}\n`;
+      } else {
+        msg += `   📈 Sin ventas este mes\n`;
+      }
+
+      if (item.vendidoHoy > 0) {
+        msg += `   🕐 Hoy: ${item.vendidoHoy} uds\n`;
+      }
+
+      msg += '\n';
+    });
+
+    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+
+  } catch(e) {
+    console.error('Error cruce producto:', e.message);
+    return '❌ No pude cruzar los datos. Intenta de nuevo.';
   }
 }
 
