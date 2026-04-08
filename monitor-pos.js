@@ -34,6 +34,23 @@ function parsearMonto(str) {
   return isNaN(num) ? 0 : num;
 }
 
+/**
+ * Parsea valores numéricos que vienen del JSON de VectorPOS.
+ * Pueden ser number (8277.79) o string en formato colombiano ("8.277,79").
+ * NO elimina el punto si es el separador decimal estándar.
+ */
+function parsearMontoJSON(val) {
+  if (!val && val !== 0) return 0;
+  if (typeof val === 'number') return val;
+  const s = String(val).trim();
+  if (!s || s === '-') return 0;
+  // Formato colombiano: tiene coma como decimal → "8.277,79"
+  if (s.includes(',')) return parsearMonto(s);
+  // Formato estándar con punto decimal → "8277.79" o "82777.916"
+  const num = parseFloat(s.replace(/[^0-9.]/g, ''));
+  return isNaN(num) ? 0 : num;
+}
+
 // ──────────────────────────────────────────────
 // LOGIN CON PUPPETEER
 // ──────────────────────────────────────────────
@@ -454,8 +471,8 @@ async function consultarTodoInventario() {
     saldo:       parseFloat(p['Saldo Actual']) || 0,
     medida:      p.Medida || '',
     codigo:      p.Codigo || '',
-    costoUnidad: parsearMonto(String(p['Costo Unidad'] || p['Costo Unitario'] || p['Costo'] || '0')),
-    costoTotal:  parsearMonto(String(p['Costo Total']  || p['Valor Total']    || '0')),
+    costoUnidad: parsearMontoJSON(p['Costo Unidad'] ?? p['Costo Unitario'] ?? p['Costo'] ?? 0),
+    costoTotal:  parsearMontoJSON(p['Costo Total']  ?? p['Valor Total']    ?? 0),
   }));
 }
 
