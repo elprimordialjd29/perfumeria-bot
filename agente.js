@@ -43,6 +43,7 @@ Inventar datos confunde al dueño y destruye la confianza. Si no hay etiqueta di
 [RANKING_MES]       → ranking cajeros mes
 [INVENTARIO]        → inventario general, stock total, alertas de productos bajos, qué falta
 [VENTAS_INVENTARIO] → reporte completo ventas vs inventario de TODOS los productos: stock actual + vendido este mes, ordenado por más vendido
+[RESTOCK]           → costo de restock, cuánto costaría reponer el inventario bajo, costo unitario y total por producto
 [CRUCE_PRODUCTO:texto] → cruce ventas+inventario de UN producto este mes y hoy. Extrae el término clave. Ej: "cuánto queda de tapa plana 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml] | "single color" → [CRUCE_PRODUCTO:singler color] | "tapa plana 50ml vendido y stock" → [CRUCE_PRODUCTO:tapa plana 50ml]
 [CRUCE_PRODUCTO_RANGO:texto:YYYY-MM-DD:YYYY-MM-DD] → cuánto se vendió de un producto en un período específico + stock actual. Convierte fechas relativas a YYYY-MM-DD. Ej:
   "cuánto se vendió de singler color ayer" → [CRUCE_PRODUCTO_RANGO:singler color:AYER:AYER]
@@ -121,26 +122,27 @@ function activarEsperaEleccion() {
 
 // Mapa de números/letras de menú a acciones directas
 const MENU_ACCIONES = {
-  '1': '[REPORTE_HOY]',
-  '2': '[REPORTE_MES]',
-  '3': '[REPORTE_MES_ANT]',
-  '4': '[REPORTE_SEMANA]',
-  '5': '[PRODUCTOS_MES]',
-  '6': '[MEDIOS_PAGO_HOY]',
-  '7': '[QUIEN_TRABAJO]',
-  '8': '[RANKING_MES]',
-  '9': '[INVENTARIO]',
-  '0': '[REPORTE_RANGO]',
-  'r': '[REQUERIMIENTO]',
-  'R': '[REQUERIMIENTO]',
-  'e': '[EXPORTAR_EXCEL]',
-  'E': '[EXPORTAR_EXCEL]',
-  'v': '[VER_REQS]',
-  'V': '[VER_REQS]',
-  'i': '[VENTAS_INVENTARIO]',
-  'I': '[VENTAS_INVENTARIO]',
-  'g': '[REPORTE_GENERAL]',
-  'G': '[REPORTE_GENERAL]',
+  '1':  '[REPORTE_HOY]',
+  '2':  '[REPORTE_MES]',
+  '3':  '[REPORTE_MES_ANT]',
+  '4':  '[REPORTE_SEMANA]',
+  '5':  '[PRODUCTOS_MES]',
+  '6':  '[MEDIOS_PAGO_HOY]',
+  '7':  '[QUIEN_TRABAJO]',
+  '8':  '[RANKING_MES]',
+  '9':  '[INVENTARIO]',
+  '10': '[REPORTE_RANGO]',
+  '11': '[REPORTE_GENERAL]',
+  '12': '[VENTAS_INVENTARIO]',
+  '13': '[RESTOCK]',
+  '14': '[GASTOS]',
+  '15': '[VENTAS_HORA]',
+  'r':  '[REQUERIMIENTO]',
+  'R':  '[REQUERIMIENTO]',
+  'e':  '[EXPORTAR_EXCEL]',
+  'E':  '[EXPORTAR_EXCEL]',
+  'v':  '[VER_REQS]',
+  'V':  '[VER_REQS]',
 };
 
 /** Retorna objeto con fechas de referencia relativas */
@@ -403,6 +405,10 @@ async function ejecutarAccion(raw) {
 
     if (raw.startsWith('[VENTAS_INVENTARIO]')) {
       return await reporteVentasVsInventario();
+    }
+
+    if (raw.startsWith('[RESTOCK]')) {
+      return await reporteRestock();
     }
 
     if (raw.startsWith('[CRUCE_PRODUCTO_RANGO:')) {
@@ -1029,6 +1035,81 @@ async function reporteVentasPorHora(desde, hasta, titulo) {
 }
 
 // ──────────────────────────────────────────────
+// REPORTE RESTOCK — costo de reponer inventario bajo
+// ──────────────────────────────────────────────
+
+async function reporteRestock() {
+  try {
+    const inventario = await monitor.consultarTodoInventario() || [];
+
+    // Productos con stock bajo (mismo umbral que alertas)
+    const bajos = inventario.filter(p => {
+      if (p.medida && (p.medida.toLowerCase().includes('gr') || p.medida.toLowerCase().includes('ml'))) {
+        return p.saldo < 500;
+      }
+      return p.saldo < 20;
+    }).sort((a, b) => a.saldo - b.saldo);
+
+    if (!bajos.length) return '✅ *Restock:* Todos los productos tienen stock suficiente.';
+
+    // Verificar si VectorPOS tiene datos de costo
+    const tieneCostos = bajos.some(p => p.costo > 0);
+
+    const lineas = [];
+    let totalRestock = 0;
+
+    bajos.forEach(p => {
+      const nivel = p.saldo <= 0 ? '🚨' : p.saldo <= 5 ? '🔴' : '🟡';
+      let bloque = `${nivel} *${p.nombre}*\n`;
+      bloque += `   📦 Stock actual: ${p.saldo} ${p.medida}\n`;
+
+      if (tieneCostos && p.costo > 0) {
+        // Estimar cantidad a reponer (hasta el umbral mínimo recomendado)
+        const umbral = p.medida?.toLowerCase().includes('gr') || p.medida?.toLowerCase().includes('ml') ? 500 : 20;
+        const reponer = Math.max(0, umbral - p.saldo);
+        const costoTotal = reponer * p.costo;
+        totalRestock += costoTotal;
+        bloque += `   💵 Costo unitario: $${p.costo.toLocaleString('es-CO')}\n`;
+        bloque += `   📦 Reponer: ${reponer} ${p.medida}\n`;
+        bloque += `   💰 Costo total: *$${costoTotal.toLocaleString('es-CO')}*\n`;
+      }
+      lineas.push(bloque);
+    });
+
+    // Dividir en partes de máx 3500 chars
+    const encabezado = `💰 *COSTO DE RESTOCK (${bajos.length} productos bajos)*\n` +
+      (tieneCostos ? '' : `⚠️ _VectorPOS no tiene costos registrados. Solo se muestra el stock bajo._\n`) +
+      `\n`;
+
+    const partes = [];
+    let parteActual = encabezado;
+    for (const linea of lineas) {
+      if ((parteActual + linea).length > 3500) {
+        partes.push(parteActual);
+        parteActual = `💰 _(restock — continuación)_\n\n`;
+      }
+      parteActual += linea;
+    }
+
+    let pie = `\n`;
+    if (tieneCostos && totalRestock > 0) {
+      pie += `💰 *INVERSIÓN TOTAL ESTIMADA: $${totalRestock.toLocaleString('es-CO')}*\n`;
+      pie += `_Calculado para reponer al mínimo recomendado_\n`;
+    }
+    pie += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    parteActual += pie;
+    partes.push(parteActual);
+
+    if (partes.length === 1) return partes[0];
+    return { tipo: 'mensajes', partes };
+
+  } catch(e) {
+    console.error('Error restock:', e.message);
+    return '❌ No pude calcular el restock. Intenta de nuevo.';
+  }
+}
+
+// ──────────────────────────────────────────────
 // REPORTE COMPLETO: VENTAS VS INVENTARIO
 // ──────────────────────────────────────────────
 
@@ -1386,18 +1467,21 @@ function mensajeBienvenida() {
 
 function mensajeMenu() {
   return `📋 *MENÚ DE OPCIONES*\n\n` +
-    `⭐ *G* — Reporte general (ayer + mes + inventario bajo)\n` +
-    `1️⃣ Ventas de hoy\n` +
-    `2️⃣ Ventas de este mes\n` +
-    `3️⃣ Ventas del mes pasado\n` +
-    `4️⃣ Ventas de esta semana\n` +
-    `5️⃣ Productos más/menos vendidos del mes\n` +
-    `6️⃣ Medios de pago hoy\n` +
-    `7️⃣ Quién trabajó hoy\n` +
-    `8️⃣ Ranking cajeros del mes (con desglose por día)\n` +
-    `9️⃣ Alertas de inventario\n` +
-    `0️⃣ Ventas por rango de fechas\n` +
-    `📦 *I* — Estado del inventario (ventas vs stock todos los productos)\n` +
+    `1️⃣  Ventas de hoy\n` +
+    `2️⃣  Ventas de este mes\n` +
+    `3️⃣  Ventas del mes pasado\n` +
+    `4️⃣  Ventas de esta semana\n` +
+    `5️⃣  Productos más/menos vendidos del mes\n` +
+    `6️⃣  Medios de pago hoy\n` +
+    `7️⃣  Quién trabajó hoy\n` +
+    `8️⃣  Ranking cajeros del mes (desglose por día)\n` +
+    `9️⃣  Alertas de inventario\n` +
+    `🔟  Ventas por rango de fechas\n` +
+    `1️⃣1️⃣ Reporte general (ayer + mes + inventario bajo)\n` +
+    `1️⃣2️⃣ Ventas vs inventario completo\n` +
+    `1️⃣3️⃣ Costo de restock (qué falta + cuánto costaría)\n` +
+    `1️⃣4️⃣ Gastos del mes\n` +
+    `1️⃣5️⃣ Ventas por hora (hora pico)\n` +
     `🇷 *R* — Crear requerimiento nuevo\n` +
     `🇻 *V* — Ver requerimientos\n` +
     `📊 *E* — Exportar reporte en Excel\n\n` +
