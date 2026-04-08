@@ -1294,17 +1294,17 @@ function mensajeMenu() {
     `8️⃣ Ranking cajeros del mes (con desglose por día)\n` +
     `9️⃣ Alertas de inventario\n` +
     `0️⃣ Ventas por rango de fechas\n` +
-    `📦 *I* — Estado del inventario (ventas vs stock)\n` +
+    `📦 *I* — Estado del inventario (ventas vs stock todos los productos)\n` +
     `🇷 *R* — Crear requerimiento nuevo\n` +
     `🇻 *V* — Ver requerimientos\n` +
     `📊 *E* — Exportar reporte en Excel\n\n` +
     `💬 *También puedes preguntar:*\n` +
-    `• _"cuánto vendió Michelle hoy/esta semana/este mes"_\n` +
+    `• _"dame el estado de singler color"_ → vendido + stock\n` +
+    `• _"dame el estado de tapa plana 50ml"_ → vendido + stock\n` +
+    `• _"singler color ayer / esta semana / el mes pasado"_\n` +
+    `• _"cuánto vendió Michelle hoy / esta semana / este mes"_\n` +
     `• _"cuánto vendió Moisés el mes pasado"_\n` +
     `• _"ventas de Laura del 1 al 7 de abril"_\n` +
-    `• _"ventas vs inventario"_ (reporte completo todos los productos)\n` +
-    `• _"cuánto se vendió de singler color ayer/esta semana/el mes pasado"_\n` +
-    `• _"cuánto queda de tapa plana 10ml"_\n` +
     `• _"gastos del mes"_ · _"ventas por hora"_\n` +
     `• _"ayer"_ · _"ayer y hoy"_ · _"antier a hoy"_\n` +
     `• Cualquier pregunta sobre perfumes árabes 😊`;
