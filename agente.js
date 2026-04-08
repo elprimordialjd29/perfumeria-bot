@@ -539,9 +539,14 @@ async function reporteCajeroIndividual(nombre, desde, hasta, titulo) {
     await browser.close();
 
     // Buscar por nombre parcial (insensible a mayúsculas/tildes)
+    // Busca en ambas direcciones: el nombre contiene la búsqueda O la búsqueda contiene el primer nombre
     const normalizar = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const busqueda = normalizar(nombre);
-    const encontrado = cajeros.find(c => normalizar(c.cajero).includes(busqueda));
+    const encontrado = cajeros.find(c => {
+      const nombreN = normalizar(c.cajero);
+      const primerNombre = nombreN.split(' ')[0];
+      return nombreN.includes(busqueda) || busqueda.includes(primerNombre);
+    });
 
     if (!encontrado) {
       const lista = cajeros.map(c => `• ${c.cajero}`).join('\n');
