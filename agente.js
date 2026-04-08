@@ -12,41 +12,49 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const historial = [];
 
-const SYSTEM_PROMPT = `Eres Chu, asistente personal de ventas de una perfumería colombiana.
-Eres directo, amable y eficiente. Solo respondes en español.
-Ayudas al dueño con reportes de ventas, inventario, cajeros y metas de VectorPOS.
+const SYSTEM_PROMPT = `Eres Chu, asistente personal de ventas de una perfumería colombiana en Colombia.
+Eres inteligente, directo y amable. Solo respondes en español colombiano.
+Tienes acceso en tiempo real a VectorPOS (sistema de ventas), inventario y datos de cajeros.
 
-Detecta la intención del mensaje y pon la etiqueta AL INICIO de tu respuesta:
+Cuando recibes un mensaje, PRIMERO decide si necesitas consultar datos o si puedes responder directamente.
 
-[REPORTE_HOY]       → ventas de hoy, reporte de hoy, cómo vamos hoy, resumen hoy
-[REPORTE_MES]       → ventas de este mes, cómo va el mes, meta mensual, avance
-[REPORTE_MES_ANT]   → mes pasado, ventas del mes anterior
-[REPORTE_SEMANA]    → esta semana, ventas de la semana
-[REPORTE_RANGO]     → ventas del [fecha] al [fecha], rango personalizado
-[INVENTARIO]        → inventario, stock, saldos, qué falta, productos bajos, existencias
-[MEDIOS_PAGO_HOY]   → medios de pago hoy, cuánto en efectivo hoy, cuánto en transferencia hoy, cómo pagaron hoy
-[MEDIOS_PAGO_MES]   → medios de pago del mes, efectivo del mes, transferencias del mes
-[QUIEN_TRABAJO]     → quién trabajó hoy, quién vino hoy, cajeros de hoy, quién estuvo hoy
-[RANKING_HOY]       → quién vendió más hoy, ranking hoy
-[RANKING_SEM]       → ranking semana, esta semana por cajero
-[RANKING_MES]       → ranking mes, mejores cajeros, quién vende más
-[AYUDA]             → ayuda, qué puedes hacer, comandos, opciones
+━━━ ETIQUETAS DE ACCIÓN (pon AL INICIO si necesitas datos) ━━━
 
-Si el usuario menciona fechas específicas, extráelas en formato YYYY-MM-DD en la etiqueta así:
-[REPORTE_RANGO:2026-03-01:2026-03-31]
+[REPORTE_HOY]       → ventas hoy, reporte hoy, cómo vamos hoy, resumen hoy
+[REPORTE_MES]       → este mes, meta mensual, avance del mes
+[REPORTE_MES_ANT]   → mes pasado, ventas anteriores
+[REPORTE_SEMANA]    → esta semana
+[REPORTE_RANGO]     → rango de fechas (extrae: [REPORTE_RANGO:YYYY-MM-DD:YYYY-MM-DD])
+[PRODUCTOS_MES]     → qué se vendió más, ranking de perfumes, productos más vendidos, cuál fue el más vendido, el menos vendido, participación de productos
+[PRODUCTOS_HOY]     → qué se vendió hoy, productos de hoy
+[MEDIOS_PAGO_HOY]   → efectivo hoy, transferencias hoy, cómo pagaron hoy
+[MEDIOS_PAGO_MES]   → efectivo del mes, transferencias del mes
+[QUIEN_TRABAJO]     → quién trabajó hoy, cajeros de hoy
+[RANKING_HOY]       → ranking cajeros hoy
+[RANKING_SEM]       → ranking cajeros semana
+[RANKING_MES]       → ranking cajeros mes, quién vende más
+[INVENTARIO]        → inventario, stock, productos bajos, qué falta
+[AYUDA]             → ayuda, opciones, comandos
+[MENU]              → saludos: hola, buenos días, buenas, hey
 
-Si el usuario saluda (hola, buenos días, buenas, hey, etc.) responde SIEMPRE con el menú de opciones usando la etiqueta [MENU].
+━━━ CUANDO YA TIENES LOS DATOS ━━━
+Si el mensaje incluye datos entre <<<DATOS>>> y <<<FIN_DATOS>>>, úsalos para responder de forma inteligente y analítica. Puedes:
+- Destacar el producto más y menos vendido
+- Comparar cajeros
+- Dar consejos de ventas basados en los números
+- Responder preguntas específicas sobre los datos
+- Identificar tendencias
 
-Si no detectas ninguna intención especial, responde como asistente normal.
+━━━ INTELIGENCIA ━━━
+Si el usuario hace preguntas que NO requieren datos (estrategias, consejos, preguntas generales sobre perfumería, cómo mejorar ventas, etc.), responde directamente sin etiqueta usando tu conocimiento.
 
 Ejemplos:
-"dame el reporte de hoy" → "[REPORTE_HOY] Consultando VectorPOS..."
-"cómo vamos este mes" → "[REPORTE_MES] Revisando el avance del mes..."
-"ventas del mes pasado" → "[REPORTE_MES_ANT] Consultando mes anterior..."
-"qué falta en inventario" → "[INVENTARIO] Revisando el stock..."
-"quién ha vendido más este mes" → "[RANKING_MES] Aquí el ranking del mes..."
+"qué perfume se vendió más este mes" → "[PRODUCTOS_MES]"
+"cuál fue el menos vendido hoy" → "[PRODUCTOS_HOY]"
+"dame consejos para vender más" → (responde directamente con consejos)
+"cómo manejo el inventario" → (responde directamente)
 "hola" → "[MENU]"
-"buenos días" → "[MENU]"`;
+"buenos días jefe" → "[MENU]"`;
 
 // ──────────────────────────────────────────────
 // FUNCIÓN PRINCIPAL
@@ -58,9 +66,9 @@ const MENU_ACCIONES = {
   '2': '[REPORTE_MES]',
   '3': '[REPORTE_MES_ANT]',
   '4': '[REPORTE_SEMANA]',
-  '5': '[MEDIOS_PAGO_HOY]',
-  '6': '[QUIEN_TRABAJO]',
-  '7': '[RANKING_HOY]',
+  '5': '[PRODUCTOS_MES]',
+  '6': '[MEDIOS_PAGO_HOY]',
+  '7': '[QUIEN_TRABAJO]',
   '8': '[RANKING_MES]',
   '9': '[INVENTARIO]',
   '0': '[REPORTE_RANGO]',
@@ -162,6 +170,14 @@ async function ejecutarAccion(raw) {
       return await reporteQuienTrabajo();
     }
 
+    if (raw.startsWith('[PRODUCTOS_MES]')) {
+      return await reporteProductos(monitor.fechaInicioMes(), monitor.fechaHoy(), 'ESTE MES');
+    }
+
+    if (raw.startsWith('[PRODUCTOS_HOY]')) {
+      return await reporteProductos(monitor.fechaHoy(), monitor.fechaHoy(), 'HOY');
+    }
+
     if (raw.startsWith('[AYUDA]') || raw.startsWith('[MENU]')) {
       return mensajeMenu();
     }
@@ -256,6 +272,68 @@ async function reporteRankingPOS(desde, hasta, titulo) {
 // ──────────────────────────────────────────────
 
 // ──────────────────────────────────────────────
+// PRODUCTOS MÁS/MENOS VENDIDOS
+// ──────────────────────────────────────────────
+
+async function reporteProductos(desde, hasta, titulo) {
+  try {
+    const { browser, page } = await monitor.crearSesionPOS();
+    const productos = await monitor.extraerVentasProducto(page, desde, hasta);
+    await browser.close();
+
+    if (!productos.length) return `📦 Sin ventas de productos para ${titulo}.`;
+
+    const top5 = productos.slice(0, 5);
+    const bottom5 = productos.slice(-5).reverse();
+    const totalValor = productos.reduce((s, p) => s + p.valor, 0);
+    const totalCantidad = productos.reduce((s, p) => s + p.cantidad, 0);
+
+    let msg = `📦 *PRODUCTOS — ${titulo}*\n`;
+    msg += `_${productos.length} productos vendidos_\n\n`;
+
+    msg += `🏆 *MÁS VENDIDOS (por valor):*\n`;
+    top5.forEach((p, i) => {
+      const icons = ['🥇','🥈','🥉','4️⃣','5️⃣'];
+      msg += `${icons[i]} *${p.nombre}*\n`;
+      msg += `   💰 $${p.valor.toLocaleString('es-CO')} | 🛍 ${p.cantidad} uds (${p.pctValor})\n`;
+    });
+
+    msg += `\n📉 *MENOS VENDIDOS:*\n`;
+    bottom5.forEach((p, i) => {
+      msg += `• ${p.nombre}: ${p.cantidad} uds — $${p.valor.toLocaleString('es-CO')}\n`;
+    });
+
+    msg += `\n💵 Total: $${totalValor.toLocaleString('es-CO')} | ${totalCantidad} unidades`;
+    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    return msg;
+  } catch(e) {
+    console.error('Error productos:', e.message);
+    return '❌ No pude consultar los productos.';
+  }
+}
+
+// ──────────────────────────────────────────────
+// ANÁLISIS INTELIGENTE CON IA (datos + pregunta)
+// ──────────────────────────────────────────────
+
+async function analizarConIA(pregunta, datos) {
+  try {
+    const resp = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: 'Eres Chu, asistente de ventas de una perfumería colombiana. Analiza los datos proporcionados y responde la pregunta de forma concisa, útil y en español. Usa emojis ocasionalmente. Máximo 300 palabras.' },
+        { role: 'user', content: `Pregunta: ${pregunta}\n\n<<<DATOS>>>\n${datos}\n<<<FIN_DATOS>>>` }
+      ],
+      max_tokens: 400,
+      temperature: 0.6,
+    });
+    return resp.choices[0].message.content.trim();
+  } catch(e) {
+    return null;
+  }
+}
+
+// ──────────────────────────────────────────────
 // MEDIOS DE PAGO
 // ──────────────────────────────────────────────
 
@@ -333,14 +411,14 @@ function mensajeMenu() {
 2️⃣ Ventas de este mes
 3️⃣ Ventas del mes pasado
 4️⃣ Ventas de esta semana
-5️⃣ Medios de pago hoy (efectivo / transferencia)
-6️⃣ Quién trabajó hoy
-7️⃣ Ranking cajeros hoy
+5️⃣ Productos más/menos vendidos del mes
+6️⃣ Medios de pago hoy (efectivo / transferencia)
+7️⃣ Quién trabajó hoy
 8️⃣ Ranking cajeros del mes
 9️⃣ Alertas de inventario
 0️⃣ Ventas por rango de fechas
 
-_Escribe el número o dime lo que necesitas_ 😊`;
+_Escribe el número o pregúntame lo que quieras_ 😊`;
 }
 
 module.exports = { procesarMensaje };

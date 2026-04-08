@@ -300,6 +300,41 @@ function calcularPromedioNecesario(totalActual) {
 }
 
 // ──────────────────────────────────────────────
+// VENTAS POR PRODUCTO (participación)
+// ──────────────────────────────────────────────
+
+async function extraerVentasProducto(page, fechaInicial, fechaFinal) {
+  const url = `${BASE}/index.php?r=ventas%2FproductoParticipacion&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
+  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+
+  const filas = await page.evaluate(() => {
+    const rows = [];
+    document.querySelectorAll('table tr').forEach(tr => {
+      const cells = [...tr.querySelectorAll('td,th')].map(c => c.innerText.trim().replace(/\s+/g, ' '));
+      if (cells.length > 0) rows.push(cells);
+    });
+    return rows;
+  });
+
+  const productos = [];
+  for (const fila of filas) {
+    if (!fila[0] || fila[0] === 'Nombre') continue;
+    const cantidad = parseInt(fila[1]?.replace(/\./g,'')) || 0;
+    const valor = parsearMonto(fila[2]);
+    if (cantidad === 0 && valor === 0) continue;
+    productos.push({
+      nombre: fila[0],
+      cantidad,
+      valor,
+      pctCantidad: fila[6] || '0%',
+      pctValor: fila[7] || '0%',
+    });
+  }
+
+  return productos.sort((a, b) => b.valor - a.valor);
+}
+
+// ──────────────────────────────────────────────
 // ALERTAS DE INVENTARIO
 // ──────────────────────────────────────────────
 
@@ -448,6 +483,7 @@ module.exports = {
   crearSesionPOS,
   extraerVentasGenerales,
   extraerVentasCajero,
+  extraerVentasProducto,
   META_MENSUAL,
   fechaHoy,
   fechaInicioMes,
