@@ -1068,12 +1068,10 @@ async function reporteCierresCaja(desde, hasta) {
     const diasEnMes = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
     const metaDiaria = Math.round(meta / diasEnMes);
 
-    // Sesión única para cierres + ventas de hoy
+    // Sesión única — secuencial para evitar conflictos en la misma página
     const { browser, page } = await monitor.crearSesionPOS();
-    const [cierres, cajerosHoy] = await Promise.all([
-      monitor.extraerCierresCaja(page, desde, hasta),
-      monitor.extraerVentasCajero(page, hoy, hoy),
-    ]);
+    const cierres = await monitor.extraerCierresCaja(page, desde, hasta);
+    const cajerosHoy = await monitor.extraerVentasCajero(page, hoy, hoy);
     await browser.close();
 
     let msg = `🏧 *MOVIMIENTO DE CAJA*\n\n`;
