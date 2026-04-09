@@ -1940,13 +1940,14 @@ async function reporteRestock(soloAgotados = true) {
 
     // Construir líneas por categoría
     const bloquesCat = [];
+    const costoPorCat = {};
     const cats = [...ORDEN_CATS.filter(c => grupos[c])];
     for (const catKey of cats) {
       const lista = grupos[catKey].sort((a, b) => a.saldo - b.saldo);
       const emoji = CAT_EMOJI[catKey] || '📦';
+      let costoCat = 0;
       let bloqueCat = `${emoji} *${catKey}* (${lista.length})\n`;
       lista.forEach(p => {
-        // Usar _getUmbral que incluye UMBRALES_PRODUCTO (ej: SINGLER critico=100)
         const umbral = monitor.getUmbral(p.nombre, p.medida, p.categoria);
         const esRestock = umbral.restock !== false;
         const nivelStr = monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria);
@@ -1956,9 +1957,14 @@ async function reporteRestock(soloAgotados = true) {
           const reponer = Math.max(0, umbral.alerta - p.saldo);
           const costoReponer = Math.round(reponer * p.costoUnidad);
           totalRestock += costoReponer;
+          costoCat += costoReponer;
           if (reponer > 0) bloqueCat += `   🛒 Reponer ${reponer} → *$${fp(costoReponer)}*\n`;
         }
       });
+      if (costoCat > 0) {
+        costoPorCat[catKey] = costoCat;
+        bloqueCat += `   💵 _Subtotal ${catKey}: $${fp(costoCat)}_\n`;
+      }
       bloqueCat += `\n`;
       bloquesCat.push(bloqueCat);
     }
@@ -1978,7 +1984,14 @@ async function reporteRestock(soloAgotados = true) {
 
     let pie = ``;
     if (totalRestock > 0) {
-      pie += `💰 *INVERSIÓN TOTAL: $${fp(totalRestock)}*\n`;
+      pie += `━━━ *RESUMEN POR CATEGORÍA* ━━━\n`;
+      const catsOrdenadas = Object.entries(costoPorCat).sort((a, b) => b[1] - a[1]);
+      catsOrdenadas.forEach(([cat, costo]) => {
+        const emoji = CAT_EMOJI[cat] || '📦';
+        const pct = Math.round((costo / totalRestock) * 100);
+        pie += `${emoji} ${cat}: *$${fp(costo)}* (${pct}%)\n`;
+      });
+      pie += `\n💰 *INVERSIÓN TOTAL: $${fp(totalRestock)}*\n`;
     }
     pie += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     parteActual += pie;
