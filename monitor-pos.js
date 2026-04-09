@@ -406,22 +406,28 @@ async function extraerVentasProducto(page, fechaInicial, fechaFinal) {
 const APP_BASE = 'https://app.vectorpos.com.co';
 
 // ── Umbrales de alerta por categoría ──
-// ESENCIAS (M/F/U) → ideal 500g, crítico ≤50g
-// REPLICA 1.1 / ORIGINALES → se venden por unidad; solo alertar si saldo = 0
-// ENVASE → ideal >50 u, crítico <10 u
+// ESENCIAS (M/F/U) → óptimo >300g, crítico ≤200g
+// REPLICA 1.1 / ORIGINALES → solo alertar si saldo = 0
+// ENVASE → NO alerta general; solo productos específicos (ver UMBRALES_PRODUCTO)
 // INSUMOS VARIOS (alcohol) → alerta < 500, SIN restock
 // CREMA CORPORAL → alerta < 10
 const UMBRALES = {
-  'ESENCIAS M':      { alerta: 500, critico: 50, medida: 'gr', restock: true  },
-  'ESENCIAS F':      { alerta: 500, critico: 50, medida: 'gr', restock: true  },
-  'ESENCIAS U':      { alerta: 500, critico: 50, medida: 'gr', restock: true  },
-  'REPLICA 1.1':     { alerta: 1,   critico: 1,  medida: 'u',  restock: true  },
-  'ORIGINALES':      { alerta: 1,   critico: 1,  medida: 'u',  restock: true  },
-  'ENVASE':          { alerta: 50,  critico: 10, medida: 'u',  restock: true  },
-  'INSUMOS VARIOS':  { alerta: 500, critico: 100, medida: 'u', restock: false },
-  'CREMA CORPORAL':  { alerta: 10,  critico: 3,  medida: 'u',  restock: true  },
+  'ESENCIAS M':      { alerta: 300, critico: 200, medida: 'gr', restock: true  },
+  'ESENCIAS F':      { alerta: 300, critico: 200, medida: 'gr', restock: true  },
+  'ESENCIAS U':      { alerta: 300, critico: 200, medida: 'gr', restock: true  },
+  'REPLICA 1.1':     { alerta: 1,   critico: 1,   medida: 'u',  restock: true  },
+  'ORIGINALES':      { alerta: 1,   critico: 1,   medida: 'u',  restock: true  },
+  'INSUMOS VARIOS':  { alerta: 500, critico: 100, medida: 'u',  restock: false },
+  'CREMA CORPORAL':  { alerta: 10,  critico: 3,   medida: 'u',  restock: true  },
 };
-const LIMITE_GRAMOS   = 500; // default gramos
+
+// ── Umbrales por producto específico (tienen prioridad sobre la categoría) ──
+// Solo estos productos de ENVASE generan alertas
+const UMBRALES_PRODUCTO = {
+  'singler color 30ml': { alerta: 100, critico: 100, medida: 'u', restock: true },
+};
+
+const LIMITE_GRAMOS   = 300; // default gramos
 const LIMITE_UNIDADES = 15;  // default unidades
 
 /** Formatea un monto en pesos colombianos (enteros, sin decimales) */
@@ -665,7 +671,17 @@ async function consultarAlertasInventario() {
   console.log(`✅ ${inv.length} productos cargados`);
 
   const alertas = inv.filter(p => {
-    const cat = (p.categoria || '').toUpperCase().trim();
+    const nombreN = (p.nombre || '').toLowerCase();
+    const cat     = (p.categoria || '').toUpperCase().trim();
+
+    // 1. Producto específico tiene prioridad
+    const prodKey = Object.keys(UMBRALES_PRODUCTO).find(k => nombreN.includes(k));
+    if (prodKey) return p.saldo <= UMBRALES_PRODUCTO[prodKey].alerta;
+
+    // 2. Envases genéricos: NO alertar (solo los específicos de arriba)
+    if (cat.includes('ENVASE') || _inferirCategoria(p.nombre, p.medida) === 'ENVASE') return false;
+
+    // 3. Categoría general
     const umbral = Object.entries(UMBRALES).find(([k]) => cat.includes(k));
     const limite = umbral ? umbral[1].alerta :
       (p.medida?.toLowerCase().includes('gr') || p.medida?.toLowerCase().includes('ml')) ? LIMITE_GRAMOS : LIMITE_UNIDADES;
