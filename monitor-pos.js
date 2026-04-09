@@ -431,6 +431,37 @@ const UMBRALES_PRODUCTO = {
 const LIMITE_GRAMOS   = 300; // default gramos
 const LIMITE_UNIDADES = 15;  // default unidades
 
+/**
+ * Retorna el umbral {alerta, critico} correcto para un producto.
+ * Primero busca por nombre específico, luego por categoría.
+ */
+function _getUmbral(nombre, medida, categoria) {
+  const nombreN = (nombre || '').toLowerCase();
+  const cat     = (categoria || _inferirCategoria(nombre, medida)).toUpperCase().trim();
+
+  // 1. Producto específico
+  const prodKey = Object.keys(UMBRALES_PRODUCTO).find(k => nombreN.includes(k));
+  if (prodKey) return UMBRALES_PRODUCTO[prodKey];
+
+  // 2. Categoría
+  const umbralCat = Object.entries(UMBRALES).find(([k]) => cat.includes(k));
+  if (umbralCat) return umbralCat[1];
+
+  // 3. Default por medida
+  const esGramos = (medida || '').toLowerCase().match(/^(gr|g|ml)/);
+  return { alerta: esGramos ? LIMITE_GRAMOS : LIMITE_UNIDADES, critico: esGramos ? 200 : 5 };
+}
+
+/**
+ * Retorna emoji + texto de nivel según saldo real vs umbrales del producto.
+ */
+function getNivelAlerta(nombre, medida, saldo, categoria) {
+  if (saldo <= 0) return '🚨 AGOTADO';
+  const u = _getUmbral(nombre, medida, categoria);
+  if (saldo <= u.critico) return '🔴 CRÍTICO';
+  return '🟠 BAJO';
+}
+
 /** Formatea un monto en pesos colombianos (enteros, sin decimales) */
 function formatPesos(val) {
   return Math.round(val).toLocaleString('es-CO');
@@ -789,16 +820,14 @@ function generarMensajeAlertas(resultado) {
   if (alertasGramos.length > 0) {
     msg += `\n🔴 *GRAMOS BAJOS (< ${LIMITE_GRAMOS}g)*\n`;
     alertasGramos.forEach(p => {
-      const nivel = p.saldo <= 0 ? '🚨 AGOTADO' : p.saldo <= 10 ? '🔴 CRÍTICO' : '🟠 BAJO';
-      msg += `${nivel} ${p.nombre}: *${p.saldo}g*\n`;
+      msg += `${getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria)} ${p.nombre}: *${p.saldo}g*\n`;
     });
   }
 
   if (alertasUnidades.length > 0) {
     msg += `\n🟡 *UNIDADES BAJAS (< ${LIMITE_UNIDADES}u)*\n`;
     alertasUnidades.forEach(p => {
-      const nivel = p.saldo <= 0 ? '🚨 AGOTADO' : p.saldo <= 5 ? '🔴 CRÍTICO' : '🟠 BAJO';
-      msg += `${nivel} ${p.nombre}: *${p.saldo} u*\n`;
+      msg += `${getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria)} ${p.nombre}: *${p.saldo} u*\n`;
     });
   }
 
@@ -940,5 +969,7 @@ module.exports = {
   fechaInicioMes,
   formatPesos,
   UMBRALES,
+  UMBRALES_PRODUCTO,
   inferirCategoria: _inferirCategoria,
+  getNivelAlerta,
 };

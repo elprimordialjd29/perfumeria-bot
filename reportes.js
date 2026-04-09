@@ -216,7 +216,7 @@ async function enviarReporteMatutino() {
       const partes = [];
       let parteActual = encInv;
       for (const p of bajos) {
-        const nivel = p.saldo <= 0 ? '🚨 AGOTADO' : p.saldo <= 5 ? '🔴 CRÍTICO' : '🟡 BAJO';
+        const nivel = monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria);
         const linea = `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'uds'}\n`;
         if ((parteActual + linea).length > 3000) {
           partes.push(parteActual);

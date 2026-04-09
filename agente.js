@@ -769,7 +769,7 @@ async function reporteGeneral() {
           (agotados.length > 0 ? `🚨 *${agotados.length} AGOTADOS*\n` : '') + `\n`;
         let parteInv = enc;
         for (const p of bajos) {
-          const nivel = p.saldo <= 0 ? '🚨 AGOTADO' : p.saldo <= 5 ? '🔴 CRÍTICO' : '🟡 BAJO';
+          const nivel = monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria);
           const linea = `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'uds'}\n`;
           if ((parteInv + linea).length > 3500) {
             partesMsgs.push(parteInv);
