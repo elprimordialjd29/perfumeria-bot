@@ -367,6 +367,19 @@ async function procesarMensaje(texto, esAdmin = true) {
     return await ejecutarAccion(tagRelativo);
   }
 
+  // ── Detección directa: CAJA con período ──
+  if (/^caja\s+(de\s+)?hoy$/.test(tLow))                           return await ejecutarAccion('[CAJA_HOY]');
+  if (/^caja\s+(de\s+)?ayer$/.test(tLow)) {
+    const r = fechasRelativas();
+    return await ejecutarAccion(`[CAJA_RANGO:${r.ayer}:${r.ayer}]`);
+  }
+  if (/^caja\s+(de\s+)?(esta\s+)?semana$/.test(tLow))              return await ejecutarAccion('[CAJA_SEM]');
+  if (/^caja\s+(de\s+)?(este\s+)?mes$/.test(tLow))                 return await ejecutarAccion('[CAJA_MES]');
+  if (/^caja\s+(de\s+)?antier$/.test(tLow)) {
+    const r = fechasRelativas();
+    return await ejecutarAccion(`[CAJA_RANGO:${r.antier}:${r.antier}]`);
+  }
+
   // ── Detección directa: checklist de contenido ──
 
   // "redes sociales para esta semana" / "plan de redes" → PLAN con copies
