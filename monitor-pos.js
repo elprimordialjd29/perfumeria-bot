@@ -786,7 +786,7 @@ function generarMensajeAlertas(resultado) {
 // ──────────────────────────────────────────────
 
 async function extraerGastos(page, fechaInicial, fechaFinal) {
-  const url = `${BASE}/index.php?r=correcciones%2Fgastos&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
+  const url = `${BASE}/index.php?r=compras%2Fgastos&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
   await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
 
   const filas = await page.evaluate(() => {
@@ -821,15 +821,8 @@ async function extraerGastos(page, fechaInicial, fechaFinal) {
     const concepto = fila[iConcepto];
     if (concepto === 'Concepto' || concepto === 'Total' || concepto === 'Gasto') continue;
 
-    // Intentar parsear valor desde la columna detectada y como fallback buscar en toda la fila
-    let valor = parsearMonto(fila[iValor] || '');
-    if (!valor) {
-      // Buscar en todas las celdas el primer número que parezca un valor monetario
-      for (const cell of fila) {
-        const v = parsearMonto(cell);
-        if (v > 100) { valor = v; break; }
-      }
-    }
+    // Parsear valor solo desde la columna detectada
+    const valor = parsearMonto(fila[iValor] || '');
 
     gastos.push({
       concepto,
