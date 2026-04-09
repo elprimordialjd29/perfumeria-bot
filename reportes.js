@@ -27,15 +27,23 @@ function iniciar(bot) {
     await enviarReporteSemanal();
   }, { timezone: 'America/Bogota' });
 
-  // ── Detector de cierres de caja: cada 10 minutos ──
+  // ── Detector de cierres y apertura: cada 10 minutos ──
   cron.schedule('*/10 * * * *', async () => {
     await detectarNuevoCierre();
+    await detectarApertura();
+  }, { timezone: 'America/Bogota' });
+
+  // ── Reporte de mediodía: 12:00 PM ──
+  cron.schedule('0 12 * * *', async () => {
+    console.log('🌞 Enviando reporte mediodía...');
+    await enviarReporteMediodia();
   }, { timezone: 'America/Bogota' });
 
   console.log('✅ Reportes automáticos activados:');
   console.log('   🌅 Matutino (ayer + mes + inventario): 7:30 AM diario');
+  console.log('   🌞 Mediodía: 12:00 PM diario');
   console.log('   📅 Semanal: lunes 8:00 AM');
-  console.log('   🏧 Detector cierres de caja: cada 10 min');
+  console.log('   🏧 Detector cierres/apertura: cada 10 min');
 }
 
 // ──────────────────────────────────────────────
@@ -340,6 +348,149 @@ async function detectarNuevoCierre() {
 
   } catch(e) {
     console.error('Error detector cierre:', e.message);
+  }
+}
+
+// ──────────────────────────────────────────────
+// DETECTOR DE APERTURA
+// Detecta la primera venta del día y notifica quién abrió y a qué hora
+// ──────────────────────────────────────────────
+
+async function detectarApertura() {
+  try {
+    const hoy = monitor.fechaHoy();
+    const fp  = (v) => Math.round(v).toLocaleString('es-CO');
+
+    // Verificar si ya notificamos apertura hoy
+    const cfg = await db.obtenerConfig();
+    if (cfg?.ultima_apertura_fecha === hoy) return; // ya notificado hoy
+
+    const { browser, page } = await monitor.crearSesionPOS();
+    const cajeros  = await monitor.extraerVentasCajero(page, hoy, hoy);
+    const porHora  = await monitor.extraerVentasPorHora(page, hoy, hoy);
+    const productos = await monitor.extraerVentasProducto(page, hoy, hoy);
+    await browser.close();
+
+    const activos = cajeros.filter(c => c.tickets > 0);
+    if (!activos.length) return; // aún no hay ventas hoy
+
+    // Hora de apertura = primera hora con ventas
+    const primeraHora = porHora.find(h => h.total > 0);
+    const horaApertura = primeraHora
+      ? `${String(primeraHora.hora).padStart(2, '0')}:00`
+      : 'N/A';
+
+    // Guardar que ya notificamos apertura hoy
+    await db.actualizarConfig({ ultima_apertura_fecha: hoy });
+
+    const totalActual  = activos.reduce((s, c) => s + c.total, 0);
+    const ticketsTotal = activos.reduce((s, c) => s + c.tickets, 0);
+    const meta         = parseInt(process.env.META_MENSUAL) || 10000000;
+    const diasEnMes    = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+    const metaDiaria   = Math.round(meta / diasEnMes);
+
+    let msg = `🔓 *APERTURA DE CAJA — ${hoy}*\n\n`;
+    activos.forEach(c => {
+      msg += `👤 *${c.cajero}* abrió a las *${horaApertura}*\n`;
+    });
+
+    if (totalActual > 0) {
+      msg += `\n📊 *Avance actual:*\n`;
+      msg += `💰 Vendido: $${fp(totalActual)} | 🎫 ${ticketsTotal} tickets\n`;
+      const pct = Math.min(100, Math.round((totalActual / metaDiaria) * 100));
+      msg += `🎯 Meta del día: $${fp(metaDiaria)} (${pct}% completado)\n`;
+    }
+
+    // Primera venta del día (producto más vendido por ahora)
+    if (productos.length > 0) {
+      msg += `\n🛍️ *Primera venta del día:*\n`;
+      msg += `🥇 *${productos[0].producto || productos[0].nombre}*\n`;
+    }
+
+    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    await notificar('🔓 Apertura de Caja', msg);
+    console.log(`🔓 Apertura detectada y notificada: ${activos.map(c => c.cajero).join(', ')}`);
+
+  } catch(e) {
+    console.error('Error detector apertura:', e.message);
+  }
+}
+
+// ──────────────────────────────────────────────
+// REPORTE DE MEDIODÍA — 12:00 PM
+// Resumen de la mañana: vendido, cajero activo, meta del día
+// ──────────────────────────────────────────────
+
+async function enviarReporteMediodia() {
+  try {
+    const hoy = monitor.fechaHoy();
+    const fp  = (v) => Math.round(v).toLocaleString('es-CO');
+    const meta       = parseInt(process.env.META_MENSUAL) || 10000000;
+    const diasEnMes  = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+    const metaDiaria = Math.round(meta / diasEnMes);
+
+    const { browser, page } = await monitor.crearSesionPOS();
+    const cajeros   = await monitor.extraerVentasCajero(page, hoy, hoy);
+    const porHora   = await monitor.extraerVentasPorHora(page, hoy, hoy);
+    const productos = await monitor.extraerVentasProducto(page, hoy, hoy);
+    await browser.close();
+
+    const activos     = cajeros.filter(c => c.tickets > 0);
+    const totalHoy    = activos.reduce((s, c) => s + c.total, 0);
+    const ticketsHoy  = activos.reduce((s, c) => s + c.tickets, 0);
+    const efectivoHoy = activos.reduce((s, c) => s + (c.efectivo || 0), 0);
+    const bancoHoy    = activos.reduce((s, c) => s + (c.bancolombia || 0), 0);
+    const nequiHoy    = activos.reduce((s, c) => s + (c.nequi || 0), 0);
+    const faltaDia    = Math.max(0, metaDiaria - totalHoy);
+    const pct         = Math.min(100, Math.round((totalHoy / metaDiaria) * 100));
+    const barra       = Math.min(Math.round(pct / 10), 10);
+    const progreso    = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
+
+    // Hora pico de la mañana
+    const horaPico = porHora.length > 0
+      ? porHora.reduce((max, h) => h.total > max.total ? h : max, porHora[0])
+      : null;
+
+    let msg = `🌞 *MEDIODÍA — ${hoy}*\n\n`;
+
+    if (!activos.length) {
+      msg += `_Sin ventas registradas esta mañana_\n`;
+    } else {
+      activos.forEach(c => {
+        msg += `👤 *${c.cajero}* | 🎫 ${c.tickets} tickets\n`;
+      });
+      msg += `\n💰 *Vendido esta mañana: $${fp(totalHoy)}*\n`;
+      if (efectivoHoy > 0) msg += `   💵 Efectivo: $${fp(efectivoHoy)}\n`;
+      if (bancoHoy > 0)    msg += `   🏦 Bancolombia: $${fp(bancoHoy)}\n`;
+      if (nequiHoy > 0)    msg += `   📱 Nequi: $${fp(nequiHoy)}\n`;
+      if (ticketsHoy > 0)  msg += `   💳 Ticket promedio: $${fp(totalHoy / ticketsHoy)}\n`;
+
+      if (horaPico && horaPico.total > 0) {
+        msg += `\n⚡ Hora pico: *${String(horaPico.hora).padStart(2,'0')}:00* — $${fp(horaPico.total)}\n`;
+      }
+
+      msg += `\n🎯 *Meta del día: $${fp(metaDiaria)}*\n`;
+      msg += `${progreso} ${pct}%\n`;
+      if (faltaDia > 0) {
+        msg += `📉 Falta para completar: *$${fp(faltaDia)}*\n`;
+      } else {
+        msg += `🏆 *¡Meta del día ya cumplida!*\n`;
+      }
+    }
+
+    // Top 3 productos de la mañana
+    if (productos.length > 0) {
+      msg += `\n📦 *Top productos esta mañana:*\n`;
+      const medallas = ['🥇','🥈','🥉'];
+      productos.slice(0, 3).forEach((p, i) => {
+        msg += `${medallas[i]} *${p.producto || p.nombre}*: ${p.unidades || p.cantidad || 0} uds\n`;
+      });
+    }
+
+    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    await notificar('🌞 Reporte Mediodía', msg);
+  } catch(e) {
+    console.error('Error reporte mediodía:', e.message);
   }
 }
 
