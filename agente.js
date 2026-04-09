@@ -76,7 +76,8 @@ Tu respuesta debe COMENZAR con la etiqueta, nada antes.
   "envases" / "envase" → [INVENTARIO_CAT:ENVASE]
   "insumos" / "alcohol" / "insumos varios" → [INVENTARIO_CAT:INSUMOS VARIOS]
   "cremas" / "crema corporal" → [INVENTARIO_CAT:CREMA CORPORAL]
-[RESTOCK]           → costo de restock, cuánto costaría reponer el inventario bajo, qué falta y cuánto cuesta, inversión para restock
+[RESTOCK]           → qué falta, qué se acabó, qué no hay, qué se agotó — SOLO productos con saldo = 0
+[RESTOCK_TODO]      → todo el restock, restock completo, todos los bajos, cuánto costaría reponer todo, inversión total para restock
 [VENTAS_INVENTARIO] → reporte completo ventas vs inventario de TODOS los productos: stock actual + vendido este mes, ordenado por más vendido
 [CRUCE_PRODUCTO:texto] → cruce ventas+inventario de UN producto este mes y hoy. Extrae el término clave. Ej: "cuánto queda de tapa plana 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml] | "single color" → [CRUCE_PRODUCTO:singler color] | "tapa plana 50ml vendido y stock" → [CRUCE_PRODUCTO:tapa plana 50ml]
 [CRUCE_PRODUCTO_RANGO:texto:YYYY-MM-DD:YYYY-MM-DD] → cuánto se vendió de un producto en un período específico + stock actual. Convierte fechas relativas a YYYY-MM-DD. Ej:
@@ -138,10 +139,14 @@ Responde directamente SOLO para:
 "qué falta de originales" → [INVENTARIO_CAT:ORIGINALES]
 "insumos bajos" → [INVENTARIO_CAT:INSUMOS VARIOS]
 "cremas bajas" → [INVENTARIO_CAT:CREMA CORPORAL]
-"qué falta y cuánto cuesta" → [RESTOCK]
-"cuánto necesito para reponer el inventario" → [RESTOCK]
-"cuánto costaría el restock" → [RESTOCK]
 "qué falta" → [RESTOCK]
+"qué se acabó" → [RESTOCK]
+"qué no hay" → [RESTOCK]
+"todo el restock" → [RESTOCK_TODO]
+"restock completo" → [RESTOCK_TODO]
+"qué falta y cuánto cuesta todo" → [RESTOCK_TODO]
+"cuánto necesito para reponer el inventario" → [RESTOCK_TODO]
+"cuánto costaría el restock" → [RESTOCK_TODO]
 "ventas vs inventario de todo" → [VENTAS_INVENTARIO]
 "dame el estado del inventario" → [VENTAS_INVENTARIO]
 "estado del inventario" → [VENTAS_INVENTARIO]
@@ -217,7 +222,7 @@ const MENU_ACCIONES = {
   '18': '[INVENTARIO_CAT:ENVASE]',
   '19': '[INVENTARIO_CAT:ORIGINALES]',
   '20': '[INVENTARIO_CAT:REPLICA 1.1]',
-  '21': '[RESTOCK]',
+  '21': '[RESTOCK_TODO]',
   // ── GASTOS ──
   '22': '[GASTOS]',
   // ── REDES SOCIALES ──
@@ -622,8 +627,12 @@ async function ejecutarAccion(rawOriginal) {
       return await reporteVentasVsInventario();
     }
 
+    if (raw.startsWith('[RESTOCK_TODO]')) {
+      return await reporteRestock(false); // todos los bajos
+    }
+
     if (raw.startsWith('[RESTOCK]')) {
-      return await reporteRestock();
+      return await reporteRestock(true); // solo agotados
     }
 
     if (raw.startsWith('[CRUCE_PRODUCTO_RANGO:')) {
@@ -1823,19 +1832,23 @@ async function reporteInventarioCategoria(categoria) {
 // REPORTE RESTOCK — costo de reponer inventario bajo
 // ──────────────────────────────────────────────
 
-async function reporteRestock() {
+async function reporteRestock(soloAgotados = true) {
   try {
     const inventario = await monitor.consultarTodoInventario() || [];
 
-    // Productos con stock bajo (mismo umbral que alertas)
+    // Filtrar según modo
     const bajos = inventario.filter(p => {
+      if (soloAgotados) return p.saldo <= 0;
+      // Todos los bajos según umbrales
       if (p.medida && (p.medida.toLowerCase().includes('gr') || p.medida.toLowerCase().includes('ml'))) {
         return p.saldo < 500;
       }
       return p.saldo < 20;
     }).sort((a, b) => a.saldo - b.saldo);
 
-    if (!bajos.length) return '✅ *Restock:* Todos los productos tienen stock suficiente.';
+    if (!bajos.length) return soloAgotados
+      ? '✅ No hay productos agotados.'
+      : '✅ *Restock:* Todos los productos tienen stock suficiente.';
 
     const tieneCostos = bajos.some(p => p.costoUnidad > 0);
 
@@ -1878,7 +1891,9 @@ async function reporteRestock() {
       lineas.push(bloque);
     });
 
-    const encabezado = `💰 *COSTO DE RESTOCK (${bajos.length} productos bajos)*\n\n`;
+    const encabezado = soloAgotados
+      ? `🚨 *AGOTADOS (${bajos.length} productos)*\n\n`
+      : `💰 *RESTOCK COMPLETO (${bajos.length} productos bajos)*\n\n`;
     const partes = [];
     let parteActual = encabezado;
     for (const linea of lineas) {
