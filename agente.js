@@ -891,6 +891,9 @@ async function reporteRango(desde, hasta, titulo) {
     const horasData = await monitor.extraerVentasPorHora(page, desde, hasta);
     await browser.close();
 
+    const preparaciones = prodRaw.filter(p => p.nombre.toLowerCase().includes('preparac'));
+    const totalPreparaciones = preparaciones.reduce((s, p) => s + (p.valor || 0), 0);
+
     const productos = prodRaw
       .filter(p => !p.nombre.toLowerCase().includes('preparac'))
       .sort((a, b) => b.cantidad - a.cantidad)
@@ -946,13 +949,21 @@ async function reporteRango(desde, hasta, titulo) {
 
       if (productos.length > 0) {
         const medallas2 = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+        const fp2 = monitor.formatPesos;
         msg += `\n📦 *Productos vendidos:*\n`;
+        let sumaProductos = 0;
         productos.forEach((p, i) => {
           const cat = monitor.inferirCategoria(p.nombre);
           const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-          const val = p.valor > 0 ? ` — $${monitor.formatPesos(p.valor)}` : '';
+          const val = p.valor > 0 ? ` — $${fp2(p.valor)}` : '';
+          sumaProductos += p.valor || 0;
           msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}${val}\n`;
         });
+        if (totalPreparaciones > 0) {
+          sumaProductos += totalPreparaciones;
+          msg += `✂️ *Preparación/servicio*: $${fp2(totalPreparaciones)}\n`;
+        }
+        msg += `_Subtotal productos: $${fp2(sumaProductos)}_\n`;
       }
     }
 
