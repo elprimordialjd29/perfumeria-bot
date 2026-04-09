@@ -78,6 +78,7 @@ Tu respuesta debe COMENZAR con la etiqueta, nada antes.
   "cremas" / "crema corporal" → [INVENTARIO_CAT:CREMA CORPORAL]
 [RESTOCK]           → qué falta, qué se acabó, qué no hay, qué se agotó — SOLO productos con saldo = 0
 [RESTOCK_TODO]      → todo el restock, restock completo, todos los bajos, cuánto costaría reponer todo, inversión total para restock
+[INVENTARIO_TODO]   → todo el inventario, inventario completo, todos los productos con su stock, estock total
 [VENTAS_INVENTARIO] → reporte completo ventas vs inventario de TODOS los productos: stock actual + vendido este mes, ordenado por más vendido
 [CRUCE_PRODUCTO:texto] → cruce ventas+inventario de UN producto este mes y hoy. Extrae el término clave. Ej: "cuánto queda de tapa plana 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml] | "single color" → [CRUCE_PRODUCTO:singler color] | "tapa plana 50ml vendido y stock" → [CRUCE_PRODUCTO:tapa plana 50ml]
 [CRUCE_PRODUCTO_RANGO:texto:YYYY-MM-DD:YYYY-MM-DD] → cuánto se vendió de un producto en un período específico + stock actual. Convierte fechas relativas a YYYY-MM-DD. Ej:
@@ -129,6 +130,10 @@ Responde directamente SOLO para:
 - Consejos de venta y cómo describir fragancias
 
 ━━━ EJEMPLOS CORRECTOS ━━━
+"todo el inventario" → [INVENTARIO_TODO]
+"inventario completo" → [INVENTARIO_TODO]
+"todos los productos" → [INVENTARIO_TODO]
+"estock total" → [INVENTARIO_TODO]
 "qué perfumes tenemos en inventario" → [INVENTARIO]
 "alertas de inventario" → [INVENTARIO]
 "qué falta de ENVASE" → [INVENTARIO_CAT:ENVASE]
@@ -505,6 +510,10 @@ async function ejecutarAccion(rawOriginal) {
       }
       // Sin fechas específicas, pedir aclaración
       return '📅 ¿Para qué rango de fechas quieres el reporte?\nEjemplo: _"ventas del 1 al 15 de marzo"_';
+    }
+
+    if (raw.startsWith('[INVENTARIO_TODO]')) {
+      return await reporteInventarioTodo();
     }
 
     if (raw.startsWith('[INVENTARIO]')) {
@@ -1754,6 +1763,54 @@ async function reporteVentasPorHora(desde, hasta, titulo) {
 // ──────────────────────────────────────────────
 // INVENTARIO POR CATEGORÍA
 // ──────────────────────────────────────────────
+
+async function reporteInventarioTodo() {
+  try {
+    const inventario = await monitor.consultarTodoInventario() || [];
+    if (!inventario.length) return '📦 No se encontraron productos en el inventario.';
+
+    const fp = monitor.formatPesos;
+    const ORDEN_CATS = ['ESENCIAS M','ESENCIAS F','ESENCIAS U','ENVASE','ORIGINALES','REPLICA 1.1','CREMA CORPORAL','INSUMOS VARIOS'];
+
+    // Agrupar por categoría
+    const grupos = {};
+    for (const p of inventario) {
+      const cat = (p.categoria || 'OTROS').toUpperCase();
+      if (!grupos[cat]) grupos[cat] = [];
+      grupos[cat].push(p);
+    }
+
+    const partes = [];
+    let msg = `📦 *INVENTARIO COMPLETO*\n_${inventario.length} productos_\n\n`;
+
+    const cats = [
+      ...ORDEN_CATS.filter(c => grupos[c]),
+      ...Object.keys(grupos).filter(c => !ORDEN_CATS.includes(c)),
+    ];
+
+    for (const cat of cats) {
+      const lista = grupos[cat].sort((a, b) => b.saldo - a.saldo);
+      const esEsencia = cat.startsWith('ESENCIAS');
+      const uni = esEsencia ? 'gr' : 'u';
+      msg += `━━━ *${cat}* (${lista.length})\n`;
+      lista.forEach(p => {
+        const nivel = p.saldo <= 0 ? '🚨' : monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria) === 'CRÍTICO' ? '🔴' : monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria) === 'BAJO' ? '🟡' : '🟢';
+        msg += `${nivel} *${p.nombre}*: ${p.saldo} ${uni}\n`;
+        if ((msg).length > 3800) { partes.push(msg); msg = `📦 _(continuación)_\n\n`; }
+      });
+      msg += `\n`;
+    }
+
+    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    partes.push(msg);
+
+    if (partes.length === 1) return partes[0];
+    return { tipo: 'mensajes', partes };
+  } catch(e) {
+    console.error('Error inventario todo:', e.message);
+    return '❌ No pude consultar el inventario completo.';
+  }
+}
 
 async function reporteInventarioCategoria(categoria) {
   if (!categoria) return '❌ Especifica una categoría. Ej: "qué falta de ENVASE"';
