@@ -11,6 +11,14 @@ const { enviarEmail } = require('./email');
 let telegramBot = null;
 let adminId = null;
 
+// Muestra cantidad con unidad correcta según categoría del producto
+function formatCantidadProducto(p) {
+  const cantidad = p.unidades || p.cantidad || 0;
+  const cat = monitor.inferirCategoria(p.producto || p.nombre || '', p.medida || '');
+  const esEsencia = cat === 'ESENCIAS' || cat === 'ESENCIAS U';
+  return `${cantidad} ${esEsencia ? 'gr' : 'uds'}`;
+}
+
 function iniciar(bot) {
   telegramBot = bot;
   adminId = process.env.TELEGRAM_ADMIN_ID;
@@ -366,7 +374,7 @@ async function detectarNuevoCierre() {
       msg += `\n📦 *Top productos hoy:*\n`;
       productos.slice(0, 5).forEach((p, i) => {
         const medallas = ['🥇','🥈','🥉','4️⃣','5️⃣'];
-        msg += `${medallas[i]} *${p.producto || p.nombre}*: ${p.unidades || p.cantidad || 0} uds\n`;
+        msg += `${medallas[i]} *${p.producto || p.nombre}*: ${formatCantidadProducto(p)}\n`;
       });
     }
 
@@ -512,7 +520,7 @@ async function enviarReporteMediodia() {
       msg += `\n📦 *Top productos esta mañana:*\n`;
       const medallas = ['🥇','🥈','🥉'];
       productos.slice(0, 3).forEach((p, i) => {
-        msg += `${medallas[i]} *${p.producto || p.nombre}*: ${p.unidades || p.cantidad || 0} uds\n`;
+        msg += `${medallas[i]} *${p.producto || p.nombre}*: ${formatCantidadProducto(p)}\n`;
       });
     }
 
