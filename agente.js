@@ -1794,7 +1794,8 @@ async function reporteInventarioTodo() {
       const uni = esEsencia ? 'gr' : 'u';
       msg += `━━━ *${cat}* (${lista.length})\n`;
       lista.forEach(p => {
-        const nivel = p.saldo <= 0 ? '🚨' : monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria) === 'CRÍTICO' ? '🔴' : monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria) === 'BAJO' ? '🟡' : '🟢';
+        const nivelStr = monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria);
+        const nivel = nivelStr.includes('AGOTADO') ? '🚨' : nivelStr.includes('CRÍTICO') ? '🔴' : nivelStr.includes('BAJO') ? '🟡' : '🟢';
         msg += `${nivel} *${p.nombre}*: ${p.saldo} ${uni}\n`;
         if ((msg).length > 3800) { partes.push(msg); msg = `📦 _(continuación)_\n\n`; }
       });
@@ -1898,7 +1899,7 @@ async function reporteRestock(soloAgotados = true) {
       if (soloAgotados) {
         // Agotados (saldo=0) + críticos según umbral de la categoría
         const nivel = monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria);
-        return nivel === 'AGOTADO' || nivel === 'CRÍTICO';
+        return nivel.includes('AGOTADO') || nivel.includes('CRÍTICO');
       }
       // Todos los bajos según umbrales
       if (p.medida && (p.medida.toLowerCase().includes('gr') || p.medida.toLowerCase().includes('ml'))) {
