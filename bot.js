@@ -130,6 +130,20 @@ bot.on('message', async (msg) => {
   }
 });
 
+// ──────────────────────────────────────────────
+// BOTONES INLINE (checklist contenido)
+// ──────────────────────────────────────────────
+
+bot.on('callback_query', async (callbackQuery) => {
+  try {
+    const manejado = await reportes.manejarCallbackContenido(bot, callbackQuery);
+    if (!manejado) await bot.answerCallbackQuery(callbackQuery.id);
+  } catch(e) {
+    console.error('❌ Error callback_query:', e.message);
+    await bot.answerCallbackQuery(callbackQuery.id).catch(() => {});
+  }
+});
+
 bot.on('polling_error', (err) => {
   console.error('❌ Error Telegram polling:', err.message);
 });

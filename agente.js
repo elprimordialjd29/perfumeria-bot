@@ -17,6 +17,17 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const historial = [];
 
+function formatFechaHora(fechaStr) {
+  if (!fechaStr) return '';
+  const match = fechaStr.match(/(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})/);
+  if (!match) return fechaStr;
+  let h = parseInt(match[2]);
+  const m = match[3];
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${match[1]} ${h}:${m} ${ampm}`;
+}
+
 const SYSTEM_PROMPT = `Eres Chu, asistente personal de ventas de una perfumería colombiana en Colombia.
 Eres inteligente, directo y amable. Solo respondes en español colombiano.
 Tienes conexión en tiempo real a VectorPOS (ventas, inventario, cajeros).
@@ -160,7 +171,12 @@ Responde directamente SOLO para:
 "cuánto vendió Moisés esta semana" → [CAJERO_SEM:moises]
 "ventas de Laura este mes" → [CAJERO_MES:laura]
 "cuánto vendió Moisés el mes pasado" → [CAJERO_MES_ANT:moises]
-"ventas de Michelle del 1 al 7 de abril" → [CAJERO_RANGO:michelle:2026-04-01:2026-04-07]`;
+"ventas de Michelle del 1 al 7 de abril" → [CAJERO_RANGO:michelle:2026-04-01:2026-04-07]
+
+━━━ REDES SOCIALES ━━━
+"checklist de hoy" / "qué toca publicar hoy" → [CONTENIDO_HOY]
+"checklist de la semana" / "cómo va el contenido esta semana" → [CONTENIDO_SEMANA]
+"ya publiqué en whatsapp" / "listo instagram" / "subí tiktok" → [CONTENIDO_MARCAR:whatsapp] / [CONTENIDO_MARCAR:instagram] / [CONTENIDO_MARCAR:tiktok]`;
 
 // ──────────────────────────────────────────────
 // FUNCIÓN PRINCIPAL
@@ -301,6 +317,34 @@ async function procesarMensaje(texto, esAdmin = true) {
     return await ejecutarAccion(tagRelativo);
   }
 
+  // ── Detección directa: checklist de contenido ──
+  const tLow = t.toLowerCase().trim();
+
+  // "redes sociales para esta semana" / "plan de redes"
+  if (/redes\s+sociales|plan.*redes|redes.*semana|contenido.*semana|semana.*redes/.test(tLow)) {
+    return await checklistContenidoSemana();
+  }
+  // "checklist hoy" / "contenido de hoy" / "qué toca hoy" (sin "semana")
+  if (/checklist|contenido\s+(de\s+)?hoy|publicar\s+hoy|qu[eé]\s+toca\s+hoy/.test(tLow) && !/semana/.test(tLow)) {
+    return await checklistContenidoHoy();
+  }
+  // "mañana" → contenido de mañana
+  if (/^(contenido\s+(de\s+)?)?ma[ñn]ana$/.test(tLow)) {
+    return await checklistContenidoDia(1);
+  }
+  // "pasado mañana" → contenido en 2 días
+  if (/pasado\s+ma[ñn]ana/.test(tLow)) {
+    return await checklistContenidoDia(2);
+  }
+  // Marcar como publicado: "listo whatsapp", "ya publiqué en instagram", etc.
+  const marcarMatch = tLow.match(/(?:listo|ya\s+public[oó]?|public[aó]|mont[oó]|subi[oó]).*?(whatsapp|instagram|tiktok|insta|wha?t?s?)/i)
+    || tLow.match(/(whatsapp|instagram|tiktok|insta)\s*(?:listo|ya|ok|done|✓|✅)/i);
+  if (marcarMatch) {
+    const redRaw = (marcarMatch[1] || marcarMatch[2] || '').toLowerCase();
+    const red = redRaw.startsWith('insta') ? 'instagram' : redRaw.startsWith('wha') ? 'whatsapp' : 'tiktok';
+    return await marcarContenidoDirecto(red);
+  }
+
   // Fix [REPORTE_RANGO]: si el bot estaba esperando fechas, extráelas directamente
   const ultimoBot = [...historial].reverse().find(h => h.role === 'assistant');
   if (ultimoBot && (ultimoBot.content.includes('REPORTE_RANGO') || ultimoBot.content.includes('rango de fechas'))) {
@@ -346,8 +390,16 @@ async function ejecutarAccion(rawOriginal) {
     let raw = rawOriginal.trim();
     if (!raw.startsWith('[')) {
       // Buscar si empieza con un tag conocido sin corchetes
-      const tagMatch = raw.match(/^(REPORTE_RANGO|REPORTE_HOY|REPORTE_MES|REPORTE_SEMANA|REPORTE_MES_ANT|REPORTE_GENERAL|INVENTARIO_CAT|INVENTARIO|RESTOCK|VENTAS_INVENTARIO|CRUCE_PRODUCTO_RANGO|CRUCE_PRODUCTO|CAJERO_HOY|CAJERO_SEM|CAJERO_MES|CAJERO_MES_ANT|CAJERO_RANGO|PRODUCTOS_MES|PRODUCTOS_HOY|MEDIOS_PAGO_HOY|MEDIOS_PAGO_MES|QUIEN_TRABAJO|RANKING_HOY|RANKING_SEM|RANKING_MES|GASTOS|CAJA|VENTAS_HORA|REQUERIMIENTO|VER_REQS|EXPORTAR_EXCEL|AGREGAR_USUARIO|VER_USUARIOS|QUITAR_USUARIO|MENU|AYUDA)[:|\]]/);
+      const tagMatch = raw.match(/^(REPORTE_RANGO|REPORTE_HOY|REPORTE_MES|REPORTE_SEMANA|REPORTE_MES_ANT|REPORTE_GENERAL|INVENTARIO_CAT|INVENTARIO|RESTOCK|VENTAS_INVENTARIO|CRUCE_PRODUCTO_RANGO|CRUCE_PRODUCTO|CAJERO_HOY|CAJERO_SEM|CAJERO_MES|CAJERO_MES_ANT|CAJERO_RANGO|PRODUCTOS_MES|PRODUCTOS_HOY|MEDIOS_PAGO_HOY|MEDIOS_PAGO_MES|QUIEN_TRABAJO|RANKING_HOY|RANKING_SEM|RANKING_MES|GASTOS|CAJA|VENTAS_HORA|REQUERIMIENTO|VER_REQS|EXPORTAR_EXCEL|AGREGAR_USUARIO|VER_USUARIOS|QUITAR_USUARIO|MENU|AYUDA|CONTENIDO_HOY|CONTENIDO_SEMANA|CONTENIDO_MARCAR)[:|\]]/);
       if (tagMatch) raw = '[' + raw + (raw.includes(']') ? '' : ']');
+    }
+
+    // ── Contenido redes sociales ──
+    if (raw.startsWith('[CONTENIDO_HOY]')) return await checklistContenidoHoy();
+    if (raw.startsWith('[CONTENIDO_SEMANA]')) return await checklistContenidoSemana();
+    if (raw.startsWith('[CONTENIDO_MARCAR:')) {
+      const red = raw.match(/\[CONTENIDO_MARCAR:(\w+)\]/)?.[1];
+      if (red) return await marcarContenidoDirecto(red);
     }
 
     if (raw.startsWith('[REPORTE_GENERAL]')) {
@@ -902,6 +954,177 @@ async function reporteRankingPOS(desde, hasta, titulo) {
 // ──────────────────────────────────────────────
 
 // ──────────────────────────────────────────────
+// CHECKLIST CONTENIDO REDES SOCIALES
+// ──────────────────────────────────────────────
+
+async function checklistContenidoHoy() {
+  const contenido = require('./contenido');
+  const db = require('./database');
+  const hoy = new Date().toISOString().split('T')[0];
+  const diaKey = contenido.getDiaKey(hoy);
+  const cal = contenido.getContenidoDe(hoy);
+  const estado = await db.obtenerEstadoContenido(hoy);
+
+  const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  const d = new Date();
+  const fechaLabel = `${contenido.getNombreDia(diaKey)} ${d.getDate()} de ${MESES[d.getMonth()]}`;
+
+  let msg = `📋 *CHECKLIST HOY — ${fechaLabel}*\n`;
+  msg += `📌 _${cal.tema}_\n`;
+  msg += `─────────────────\n`;
+
+  const redes = [
+    { key: 'whatsapp', emoji: '📱', label: 'WhatsApp' },
+    { key: 'instagram', emoji: '📸', label: 'Instagram' },
+    { key: 'tiktok',   emoji: '🎵', label: 'TikTok' },
+  ];
+
+  for (const r of redes) {
+    if (!cal[r.key]) {
+      msg += `${r.emoji} ${r.label}: ➖ _No toca hoy_\n`;
+    } else if (estado[r.key]?.done) {
+      msg += `${r.emoji} ${r.label}: ✅ _Publicado a las ${estado[r.key].hora}_\n`;
+    } else {
+      msg += `${r.emoji} ${r.label}: ⬜ _Pendiente_\n`;
+    }
+  }
+
+  const publicados = redes.filter(r => cal[r.key] && estado[r.key]?.done).length;
+  const requeridos = redes.filter(r => cal[r.key]).length;
+  const pct = requeridos > 0 ? Math.round((publicados / requeridos) * 100) : 100;
+  const barra = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
+
+  msg += `─────────────────\n`;
+  msg += `${barra} ${pct}%\n`;
+  if (publicados === requeridos) {
+    msg += `🎉 _¡Contenido del día completo!_`;
+  } else {
+    msg += `_Faltan ${requeridos - publicados} publicación(es)_`;
+  }
+
+  return msg;
+}
+
+async function checklistContenidoSemana() {
+  const contenido = require('./contenido');
+  const db = require('./database');
+
+  const hoy = new Date();
+  // Calcular lunes de esta semana
+  const diaSemana = hoy.getDay(); // 0=dom, 1=lun...
+  const diasDesdelunes = diaSemana === 0 ? 6 : diaSemana - 1;
+  const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - diasDesdelunes);
+  const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
+
+  const fmt = d => d.toISOString().split('T')[0];
+  const estadoSemana = await db.obtenerEstadoSemana(fmt(lunes), fmt(domingo));
+
+  const MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const semLabel = `${lunes.getDate()} ${MESES[lunes.getMonth()]} — ${domingo.getDate()} ${MESES[domingo.getMonth()]}`;
+
+  let msg = `📋 *CONTENIDO SEMANA — ${semLabel}*\n\n`;
+
+  let totalReq = 0, totalPub = 0;
+
+  for (let i = 0; i < 7; i++) {
+    const dia = new Date(lunes); dia.setDate(lunes.getDate() + i);
+    const fecha = fmt(dia);
+    const diaKey = contenido.DIAS_ES[dia.getDay()];
+    const cal = contenido.getContenidoDe(fecha);
+    const estado = estadoSemana[fecha] || {};
+    const esPasado = dia <= hoy;
+
+    const nombreDia = contenido.getNombreDia(diaKey);
+    const esHoy = fecha === fmt(hoy);
+    msg += `*${nombreDia}${esHoy ? ' (hoy)' : ''}*\n`;
+
+    const redes = [
+      { key: 'whatsapp', emoji: '📱' },
+      { key: 'instagram', emoji: '📸' },
+      { key: 'tiktok',   emoji: '🎵' },
+    ];
+
+    for (const r of redes) {
+      if (!cal[r.key]) continue;
+      totalReq++;
+      if (estado[r.key]?.done) {
+        totalPub++;
+        msg += `  ${r.emoji} ✅ ${r.key} — _${estado[r.key].hora}_\n`;
+      } else if (esPasado) {
+        msg += `  ${r.emoji} ⚠️ ${r.key} — _sin publicar_\n`;
+      } else {
+        msg += `  ${r.emoji} ⬜ ${r.key}\n`;
+      }
+    }
+    msg += `\n`;
+  }
+
+  const pct = totalReq > 0 ? Math.round((totalPub / totalReq) * 100) : 0;
+  const barra = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
+  msg += `─────────────────\n`;
+  msg += `${barra} ${pct}%\n`;
+  msg += `✅ ${totalPub}/${totalReq} publicaciones completadas`;
+
+  return msg;
+}
+
+async function checklistContenidoDia(diasOffset) {
+  const contenido = require('./contenido');
+  const d = new Date(); d.setDate(d.getDate() + diasOffset);
+  const fecha = d.toISOString().split('T')[0];
+  const diaKey = contenido.getDiaKey(fecha);
+  const cal = contenido.getContenidoDe(fecha);
+
+  const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  const fechaLabel = `${contenido.getNombreDia(diaKey)} ${d.getDate()} de ${MESES[d.getMonth()]}`;
+  const label = diasOffset === 1 ? 'MAÑANA' : `EN ${diasOffset} DÍAS`;
+
+  let msg = `📋 *CONTENIDO ${label} — ${fechaLabel}*\n`;
+  msg += `📌 _${cal.tema}_\n`;
+  msg += `─────────────────\n`;
+
+  const redes = [
+    { key: 'whatsapp', emoji: '📱', label: 'WhatsApp' },
+    { key: 'instagram', emoji: '📸', label: 'Instagram' },
+    { key: 'tiktok',   emoji: '🎵', label: 'TikTok' },
+  ];
+
+  for (const r of redes) {
+    if (!cal[r.key]) {
+      msg += `${r.emoji} ${r.label}: ➖ _No toca_\n`;
+    } else {
+      msg += `${r.emoji} ${r.label}: ⬜ _Programado_\n`;
+      if (r.key === 'whatsapp') {
+        msg += `\n_Copy WhatsApp:_\n${cal.whatsapp}\n\n`;
+      } else {
+        const info = cal[r.key];
+        msg += `   💡 _${info.tipo}_\n`;
+        msg += `   📌 _${info.idea}_\n`;
+      }
+    }
+  }
+
+  return msg;
+}
+
+async function marcarContenidoDirecto(red) {
+  const db = require('./database');
+  const contenido = require('./contenido');
+  const hoy = new Date().toISOString().split('T')[0];
+  const cal = contenido.getContenidoHoy();
+
+  if (!cal || !cal[red]) {
+    const nombres = { whatsapp: 'WhatsApp', instagram: 'Instagram', tiktok: 'TikTok' };
+    return `ℹ️ Hoy no toca publicar en ${nombres[red] || red}.`;
+  }
+
+  await db.marcarContenidoPublicado(hoy, red);
+  const nombres = { whatsapp: 'WhatsApp', instagram: 'Instagram', tiktok: 'TikTok' };
+  const hora = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true });
+  return `✅ *${nombres[red]}* marcado como publicado a las ${hora}\n\n${await checklistContenidoHoy()}`;
+}
+
+// ──────────────────────────────────────────────
 // PRODUCTOS MÁS/MENOS VENDIDOS
 // ──────────────────────────────────────────────
 
@@ -1109,7 +1332,7 @@ async function reporteGastos(desde, hasta, titulo) {
       // Pagos por día ordenados
       const pagosOrdenados = [...p.pagos].sort((a, b) => a.fecha.localeCompare(b.fecha));
       pagosOrdenados.forEach(g => {
-        bloque += `  📅 ${g.fecha}\n`;
+        bloque += `  📅 ${formatFechaHora(g.fecha)}\n`;
         bloque += `  • *${g.concepto}*: $${fp(g.valor)}`;
         if (g.detalle) bloque += ` — ${g.detalle}`;
         if (g.medioPago) bloque += ` | 💳 ${g.medioPago}`;

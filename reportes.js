@@ -39,11 +39,36 @@ function iniciar(bot) {
     await enviarReporteMediodia();
   }, { timezone: 'America/Bogota' });
 
+  // ── Plan semanal de contenido: domingo 8:00 PM ──
+  cron.schedule('0 20 * * 0', async () => {
+    console.log('📋 Enviando plan de contenido semanal...');
+    await enviarPlanContenidoSemanal();
+  }, { timezone: 'America/Bogota' });
+
+  // ── Recordatorio WhatsApp: 8:00 AM todos los días ──
+  cron.schedule('0 8 * * *', async () => {
+    await enviarRecordatorioContenido('whatsapp');
+  }, { timezone: 'America/Bogota' });
+
+  // ── Recordatorio Instagram: 8:30 AM lun/mié/vie/dom ──
+  cron.schedule('30 8 * * 0,1,3,5', async () => {
+    await enviarRecordatorioContenido('instagram');
+  }, { timezone: 'America/Bogota' });
+
+  // ── Recordatorio TikTok: 8:30 AM mar/jue/sáb ──
+  cron.schedule('30 8 * * 2,4,6', async () => {
+    await enviarRecordatorioContenido('tiktok');
+  }, { timezone: 'America/Bogota' });
+
   console.log('✅ Reportes automáticos activados:');
   console.log('   🌅 Matutino (ayer + mes + inventario): 7:30 AM diario');
   console.log('   🌞 Mediodía: 12:00 PM diario');
   console.log('   📅 Semanal: lunes 8:00 AM');
   console.log('   🏧 Detector cierres/apertura: cada 10 min');
+  console.log('   📋 Plan contenido: domingo 8:00 PM');
+  console.log('   📱 Recordatorio WhatsApp: 8:00 AM diario');
+  console.log('   📸 Recordatorio Instagram: 8:30 AM lun/mié/vie/dom');
+  console.log('   🎵 Recordatorio TikTok: 8:30 AM mar/jue/sáb');
 }
 
 // ──────────────────────────────────────────────
@@ -498,4 +523,152 @@ async function enviarReporteMediodia() {
   }
 }
 
-module.exports = { iniciar, notificar, enviarReporteDiario, enviarReporteSemanal };
+// ──────────────────────────────────────────────
+// CONTENIDO REDES SOCIALES
+// ──────────────────────────────────────────────
+
+async function notificarAdmin(texto, opciones = {}) {
+  if (!telegramBot || !adminId) return;
+  try {
+    await telegramBot.sendMessage(adminId, texto, { parse_mode: 'Markdown', ...opciones });
+  } catch(e) {
+    try { await telegramBot.sendMessage(adminId, texto, opciones); } catch(e2) {}
+  }
+}
+
+async function enviarPlanContenidoSemanal() {
+  try {
+    const contenido = require('./contenido');
+    const hoy = new Date();
+    // Calcular lunes de la próxima semana
+    const diasHastaLunes = (8 - hoy.getDay()) % 7 || 7;
+    const lunes = new Date(hoy); lunes.setDate(hoy.getDate() + diasHastaLunes);
+
+    const MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+    const semanaLabel = `${lunes.getDate()} ${MESES[lunes.getMonth()]}`;
+
+    let msg = `📋 *PLAN DE CONTENIDO — Semana del ${semanaLabel}*\n`;
+    msg += `_SALMA PERFUM_\n`;
+    msg += `─────────────────────\n\n`;
+
+    const fmtLunes = lunes.toISOString().split('T')[0];
+    const calendarioSemana = contenido.getCalendarioSemana(fmtLunes);
+    const letraSemana = contenido.getLetraSemana(fmtLunes);
+
+    msg += `_Semana ${letraSemana} — rotación automática_\n\n`;
+
+    const orden = ['lunes','martes','miercoles','jueves','viernes','sabado','domingo'];
+    for (const diaKey of orden) {
+      const cal = calendarioSemana[diaKey];
+      const nombre = contenido.getNombreDia(diaKey);
+      msg += `*${nombre}*\n`;
+      msg += `📌 _${cal.tema}_\n`;
+      msg += `   📱 WhatsApp ✅ requerido\n`;
+      if (cal.instagram) msg += `   📸 Instagram — ${cal.instagram.tipo}\n`;
+      if (cal.tiktok)    msg += `   🎵 TikTok — ${cal.tiktok.tipo}\n`;
+      msg += `\n`;
+    }
+
+    msg += `─────────────────────\n`;
+    msg += `💡 _Cada mañana recibirás el recordatorio con el copy listo para publicar._\n`;
+    msg += `✅ _Marca como publicado con el botón en cada recordatorio._`;
+
+    await notificarAdmin(msg);
+  } catch(e) {
+    console.error('Error plan contenido semanal:', e.message);
+  }
+}
+
+async function enviarRecordatorioContenido(red) {
+  try {
+    const contenido = require('./contenido');
+    const hoy = new Date().toISOString().split('T')[0];
+    const diaKey = contenido.getDiaKey(hoy);
+    const cal = contenido.getContenidoHoy();
+
+    if (!cal || !cal[red]) return; // no toca esta red hoy
+
+    // Si ya fue publicado, no recordar
+    const estado = await db.obtenerEstadoContenido(hoy);
+    if (estado[red]?.done) return;
+
+    const nombreDia = contenido.getNombreDia(diaKey);
+    const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+    const d = new Date();
+    const fechaLabel = `${nombreDia} ${d.getDate()} de ${MESES[d.getMonth()]}`;
+
+    const emojis = { whatsapp: '📱', instagram: '📸', tiktok: '🎵' };
+    const redLabel = red.charAt(0).toUpperCase() + red.slice(1);
+    const emoji = emojis[red];
+
+    let msg = `${emoji} *RECORDATORIO — ${redLabel.toUpperCase()}*\n`;
+    msg += `📅 ${fechaLabel}\n`;
+    msg += `📌 _${cal.tema}_\n\n`;
+
+    if (red === 'whatsapp') {
+      msg += `*Copia y pega este estado:*\n`;
+      msg += `─────────────────\n`;
+      msg += `${cal.whatsapp}\n`;
+      msg += `─────────────────`;
+    } else {
+      const info = cal[red];
+      msg += `*Tipo:* ${info.tipo}\n`;
+      msg += `*Idea:* ${info.idea}\n\n`;
+      msg += `*Copy sugerido:*\n`;
+      msg += `─────────────────\n`;
+      msg += `${info.copy}\n`;
+      msg += `─────────────────`;
+    }
+
+    const keyboard = {
+      inline_keyboard: [[{
+        text: `✅ Ya lo publiqué en ${redLabel}`,
+        callback_data: `cnt_ok_${red}_${hoy}`,
+      }]]
+    };
+
+    await notificarAdmin(msg, { reply_markup: keyboard });
+  } catch(e) {
+    console.error(`Error recordatorio contenido ${red}:`, e.message);
+  }
+}
+
+async function manejarCallbackContenido(bot, callbackQuery) {
+  const data = callbackQuery.data;
+  if (!data.startsWith('cnt_ok_')) return false;
+
+  const parts = data.replace('cnt_ok_', '').split('_');
+  // formato: red_YYYY-MM-DD  (red puede ser 'whatsapp', 'instagram', 'tiktok')
+  const fecha = parts.slice(-3).join('-'); // YYYY-MM-DD
+  const red   = parts.slice(0, -3).join('_');
+
+  await db.marcarContenidoPublicado(fecha, red);
+
+  const redLabel = red.charAt(0).toUpperCase() + red.slice(1);
+  const hora = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+  // Editar el mensaje original para mostrar el checkmark
+  try {
+    const msgId  = callbackQuery.message.message_id;
+    const chatId = callbackQuery.message.chat.id;
+    const textoOriginal = callbackQuery.message.text || '';
+    const nuevoTexto = textoOriginal.replace(/─────────────────$/, '─────────────────') +
+      `\n\n✅ *Publicado en ${redLabel}* a las ${hora}`;
+    await bot.editMessageText(nuevoTexto, {
+      chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [] },
+    });
+  } catch(e) {}
+
+  await bot.answerCallbackQuery(callbackQuery.id, {
+    text: `✅ ${redLabel} marcado como publicado`,
+  });
+
+  return true;
+}
+
+module.exports = {
+  iniciar, notificar,
+  enviarReporteDiario, enviarReporteSemanal,
+  enviarPlanContenidoSemanal, enviarRecordatorioContenido, manejarCallbackContenido,
+};

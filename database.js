@@ -243,6 +243,51 @@ async function esUsuarioAutorizado(chatId) {
   return lista.some(u => u.chatId === chatId);
 }
 
+// ──────────────────────────────────────────────
+// CONTENIDO REDES SOCIALES
+// Guarda estado en config: contenido_{fecha}_{red} = JSON
+// ──────────────────────────────────────────────
+
+async function marcarContenidoPublicado(fecha, red) {
+  const key = `contenido_${fecha}_${red}`;
+  const hora = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true });
+  const value = JSON.stringify({ done: true, hora });
+  await getSupabase().from('config').upsert([{ key, value }], { onConflict: 'key' });
+}
+
+async function obtenerEstadoContenido(fecha) {
+  const redes = ['whatsapp', 'instagram', 'tiktok'];
+  const keys = redes.map(r => `contenido_${fecha}_${r}`);
+  const { data } = await getSupabase().from('config').select('key, value').in('key', keys);
+  const estado = { whatsapp: null, instagram: null, tiktok: null };
+  if (data) {
+    for (const row of data) {
+      const red = row.key.replace(`contenido_${fecha}_`, '');
+      try { estado[red] = JSON.parse(row.value); } catch(e) {}
+    }
+  }
+  return estado;
+}
+
+async function obtenerEstadoSemana(desde, hasta) {
+  // Obtener todos los registros de contenido en el rango
+  const { data } = await getSupabase().from('config').select('key, value')
+    .like('key', 'contenido_%');
+  const dias = {};
+  if (data) {
+    for (const row of data) {
+      const parts = row.key.split('_'); // ['contenido', 'YYYY-MM-DD', 'red']
+      if (parts.length < 3) continue;
+      const fecha = parts[1];
+      const red = parts[2];
+      if (fecha < desde || fecha > hasta) continue;
+      if (!dias[fecha]) dias[fecha] = { whatsapp: null, instagram: null, tiktok: null };
+      try { dias[fecha][red] = JSON.parse(row.value); } catch(e) {}
+    }
+  }
+  return dias;
+}
+
 module.exports = {
   registrarVenta,
   obtenerVentas,
@@ -263,4 +308,7 @@ module.exports = {
   agregarUsuario,
   quitarUsuario,
   esUsuarioAutorizado,
+  marcarContenidoPublicado,
+  obtenerEstadoContenido,
+  obtenerEstadoSemana,
 };
