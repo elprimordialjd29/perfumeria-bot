@@ -15,7 +15,7 @@ let adminId = null;
 function formatCantidadProducto(p) {
   const cantidad = p.unidades || p.cantidad || 0;
   const cat = monitor.inferirCategoria(p.producto || p.nombre || '', p.medida || '');
-  const esEsencia = cat === 'ESENCIAS' || cat === 'ESENCIAS U';
+  const esEsencia = cat.startsWith('ESENCIAS');
   return `${cantidad} ${esEsencia ? 'gr' : 'uds'}`;
 }
 

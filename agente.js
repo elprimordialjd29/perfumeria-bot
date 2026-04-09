@@ -866,9 +866,18 @@ async function reporteRango(desde, hasta, titulo) {
   const tituloFinal = titulo || `${desde} al ${hasta}`;
   try {
     const { browser, page } = await monitor.crearSesionPOS();
-    const ventas  = await monitor.extraerVentasGenerales(page, desde, hasta);
-    const cajeros = await monitor.extraerVentasCajero(page, desde, hasta);
+    const ventas    = await monitor.extraerVentasGenerales(page, desde, hasta);
+    const cajeros   = await monitor.extraerVentasCajero(page, desde, hasta);
+    const prodRaw   = await monitor.extraerVentasProducto(page, desde, hasta);
+    const horasData = await monitor.extraerVentasPorHora(page, desde, hasta);
     await browser.close();
+
+    const productos = prodRaw
+      .filter(p => !p.nombre.toLowerCase().includes('preparac'))
+      .sort((a, b) => b.cantidad - a.cantidad)
+      .slice(0, 10);
+
+    const primeraHoraRango = horasData.filter(h => h.total > 0).sort((a, b) => a.hora - b.hora)[0] || null;
 
     // extraerVentasGenerales puede retornar 0 para rangos cortos por formato de fecha;
     // usamos cajeros como fuente principal de total/tickets (siempre confiable)
@@ -892,6 +901,23 @@ async function reporteRango(desde, hasta, titulo) {
       cajeros.forEach((c, i) => {
         const pct = total > 0 ? ((c.total / total) * 100).toFixed(0) : 0;
         msg += `${medallas[i] || `${i + 1}.`} *${c.cajero}*: $${c.total.toLocaleString('es-CO')} (${pct}%) | ${c.tickets} tickets\n`;
+      });
+    }
+
+    if (primeraHoraRango) {
+      const h = primeraHoraRango.hora;
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12  = h % 12 || 12;
+      msg += `\n🕐 *Primera venta:* ${h12}:00 ${ampm}\n`;
+    }
+
+    if (productos.length > 0) {
+      const medallas2 = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+      msg += `\n📦 *Productos vendidos:*\n`;
+      productos.forEach((p, i) => {
+        const cat = monitor.inferirCategoria(p.nombre);
+        const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
+        msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}\n`;
       });
     }
 
@@ -1253,7 +1279,11 @@ async function marcarContenidoDirecto(red) {
 
 async function reporteProductos(desde, hasta, titulo) {
   try {
-    const { browser, page } = await monitor.crearSesionPOS();
+    // Lanzar sesión POS y catálogo en paralelo
+    const [{ browser, page }, mapaCateg] = await Promise.all([
+      monitor.crearSesionPOS(),
+      monitor.obtenerCategoriaProductos(),
+    ]);
     const raw = await monitor.extraerVentasProducto(page, desde, hasta);
     await browser.close();
 
@@ -1265,23 +1295,40 @@ async function reporteProductos(desde, hasta, titulo) {
     // 1. Excluir PREPARACIÓN (mano de obra, no producto real)
     const productos = raw.filter(p => !p.nombre.toLowerCase().includes('preparac'));
 
-    // 2. Clasificar por categoría usando la misma lógica del inventario
-    const grupos = { ESENCIAS: [], ENVASE: [], ORIGINALES: [], 'REPLICA 1.1': [], OTROS: [] };
+    // 2. Resolver categoría: catálogo VectorPOS primero, luego inferir
+    const resolverCategoria = (nombre) => {
+      const key = nombre.toLowerCase();
+      return mapaCateg[key] || monitor.inferirCategoria(nombre);
+    };
+
+    // 3. Clasificar por categoría real (ESENCIAS M / F / U separadas)
+    const grupos = {
+      'ESENCIAS M':  [],
+      'ESENCIAS F':  [],
+      'ESENCIAS U':  [],
+      'ENVASE':      [],
+      'ORIGINALES':  [],
+      'REPLICA 1.1': [],
+      'OTROS':       [],
+    };
     for (const p of productos) {
-      const cat = monitor.inferirCategoria(p.nombre);
-      if (cat.startsWith('ESENCIAS'))       grupos.ESENCIAS.push(p);
-      else if (cat === 'ENVASE')            grupos.ENVASE.push(p);
-      else if (cat === 'ORIGINALES')        grupos.ORIGINALES.push(p);
-      else if (cat === 'REPLICA 1.1')       grupos['REPLICA 1.1'].push(p);
-      else                                  grupos.OTROS.push(p);
+      const cat = resolverCategoria(p.nombre);
+      if      (cat === 'ESENCIAS M')   grupos['ESENCIAS M'].push(p);
+      else if (cat === 'ESENCIAS F')   grupos['ESENCIAS F'].push(p);
+      else if (cat === 'ESENCIAS U')   grupos['ESENCIAS U'].push(p);
+      else if (cat.startsWith('ESENCIAS')) grupos['ESENCIAS M'].push(p); // fallback sin género
+      else if (cat === 'ENVASE')       grupos.ENVASE.push(p);
+      else if (cat === 'ORIGINALES')   grupos.ORIGINALES.push(p);
+      else if (cat === 'REPLICA 1.1')  grupos['REPLICA 1.1'].push(p);
+      else                             grupos.OTROS.push(p);
     }
 
     const totalValor    = productos.reduce((s, p) => s + p.valor, 0);
     const totalCantidad = productos.reduce((s, p) => s + p.cantidad, 0);
 
-    // Unidad según categoría
+    // Unidad: esencias → gr, resto → uds
     const unidadCat = (cat) => cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-    const unidadProd = (p) => unidadCat(monitor.inferirCategoria(p.nombre));
+    const unidadProd = (p) => unidadCat(resolverCategoria(p.nombre));
 
     const partes = [];
     let msg = `📦 *PRODUCTOS — ${titulo}*\n`;
@@ -1304,7 +1351,9 @@ async function reporteProductos(desde, hasta, titulo) {
       if (msg.length > 3500) { partes.push(msg); msg = `📦 _(continuación)_\n\n`; }
     };
 
-    bloqueCategoria('🧪', 'ESENCIAS',      grupos.ESENCIAS,       'ESENCIAS');
+    bloqueCategoria('🧪', 'ESENCIAS M',    grupos['ESENCIAS M'],  'ESENCIAS M');
+    bloqueCategoria('🌸', 'ESENCIAS F',    grupos['ESENCIAS F'],  'ESENCIAS F');
+    bloqueCategoria('🌀', 'ESENCIAS U',    grupos['ESENCIAS U'],  'ESENCIAS U');
     bloqueCategoria('🧴', 'ENVASES',       grupos.ENVASE,         'ENVASE');
     bloqueCategoria('✨', 'ORIGINALES',    grupos.ORIGINALES,     'ORIGINALES');
     bloqueCategoria('🔁', 'RÉPLICAS 1.1', grupos['REPLICA 1.1'], 'REPLICA 1.1');
@@ -1507,7 +1556,21 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
     const cajerosHoy = desde === hasta && desde === hoy
       ? cajerosRango
       : await monitor.extraerVentasCajero(page, hoy, hoy);
+    // Productos vendidos del período
+    const productosRaw = await monitor.extraerVentasProducto(page, desde, hasta);
+    // Hora de la primera venta
+    const ventasHora = await monitor.extraerVentasPorHora(page, desde, hasta);
     await browser.close();
+
+    const productos = productosRaw
+      .filter(p => !p.nombre.toLowerCase().includes('preparac'))
+      .sort((a, b) => b.cantidad - a.cantidad)
+      .slice(0, 10);
+
+    // Primera hora con ventas > 0
+    const primeraHora = ventasHora.length
+      ? ventasHora.filter(h => h.total > 0).sort((a, b) => a.hora - b.hora)[0]
+      : null;
 
     const titulo = filtro
       ? `🏧 *CAJA — ${filtro.toUpperCase()}*\n_${desde} → ${hasta}_\n\n`
@@ -1602,6 +1665,25 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
         }
       }
     } // fin else rango múltiple
+
+    // ── Primera venta ──
+    if (primeraHora) {
+      const h = primeraHora.hora;
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12  = h % 12 || 12;
+      msg += `\n🕐 *Primera venta:* ${h12}:00 ${ampm}\n`;
+    }
+
+    // ── Productos vendidos ──
+    if (productos.length > 0) {
+      msg += `\n📦 *Productos vendidos:*\n`;
+      const medallas = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+      productos.forEach((p, i) => {
+        const cat = monitor.inferirCategoria(p.nombre);
+        const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
+        msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}\n`;
+      });
+    }
 
     msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
     partes.push(msg);

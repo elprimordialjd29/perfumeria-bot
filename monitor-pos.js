@@ -645,6 +645,26 @@ function _inferirCategoria(nombre, medida = '') {
   return 'ESENCIAS'; // default
 }
 
+/**
+ * Obtiene mapa {nombreNormalizado → categoria} desde el catálogo VectorPOS.
+ * Usado para cruzar productos vendidos con su categoría real (ESENCIAS M/F/U, etc.)
+ */
+async function obtenerCategoriaProductos() {
+  const catalogo = await _obtenerCatalogoProductos();
+  const mapa = {};
+  if (catalogo) {
+    catalogo.forEach(p => {
+      const nombre = (p.Nombre || p.nombre || p.NOMBRE || '').trim();
+      if (!nombre) return;
+      const key = nombre.toLowerCase();
+      const cat = p.Categoria || p.categoria || p.Categoría || p.CATEGORIA || '';
+      if (cat) mapa[key] = cat.toUpperCase().trim();
+    });
+    console.log(`🗂️  Mapa categorías: ${Object.keys(mapa).length} productos`);
+  }
+  return mapa;
+}
+
 /** Retorna TODOS los productos del inventario cruzando saldos + catálogo */
 async function consultarTodoInventario() {
   console.log('\n📦 Consultando inventario completo...');
@@ -1003,4 +1023,5 @@ module.exports = {
   UMBRALES_PRODUCTO,
   inferirCategoria: _inferirCategoria,
   getNivelAlerta,
+  obtenerCategoriaProductos,
 };
