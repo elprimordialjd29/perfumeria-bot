@@ -484,8 +484,12 @@ async function enviarReporteMediodia() {
     const productos = await monitor.extraerVentasProducto(page, hoy, hoy);
     await browser.close();
 
-    const activos     = cajeros.filter(c => c.tickets > 0);
-    const totalHoy    = activos.reduce((s, c) => s + c.total, 0);
+    const activos      = cajeros.filter(c => c.tickets > 0);
+    const totalCajeros = activos.reduce((s, c) => s + c.total, 0);
+    // Fallback: si cajeros no tiene datos aún, usar suma de productos
+    const totalProds   = productos.filter(p => !( p.producto || p.nombre || '').toLowerCase().includes('preparac'))
+                                   .reduce((s, p) => s + (p.valor || 0), 0);
+    const totalHoy    = totalCajeros > 0 ? totalCajeros : totalProds;
     const ticketsHoy  = activos.reduce((s, c) => s + c.tickets, 0);
     const efectivoHoy = activos.reduce((s, c) => s + (c.efectivo || 0), 0);
     const bancoHoy    = activos.reduce((s, c) => s + (c.bancolombia || 0), 0);
@@ -502,13 +506,16 @@ async function enviarReporteMediodia() {
 
     let msg = `🌞 *MEDIODÍA — ${hoy}*\n\n`;
 
-    if (!activos.length) {
+    if (totalHoy === 0) {
       msg += `_Sin ventas registradas esta mañana_\n`;
     } else {
-      activos.forEach(c => {
-        msg += `👤 *${c.cajero}* | 🎫 ${c.tickets} tickets\n`;
-      });
-      msg += `\n💰 *Vendido esta mañana: $${fp(totalHoy)}*\n`;
+      if (activos.length > 0) {
+        activos.forEach(c => {
+          msg += `👤 *${c.cajero}* | 🎫 ${c.tickets} tickets\n`;
+        });
+        msg += `\n`;
+      }
+      msg += `💰 *Vendido esta mañana: $${fp(totalHoy)}*\n`;
       if (efectivoHoy > 0) msg += `   💵 Efectivo: $${fp(efectivoHoy)}\n`;
       if (bancoHoy > 0)    msg += `   🏦 Bancolombia: $${fp(bancoHoy)}\n`;
       if (nequiHoy > 0)    msg += `   📱 Nequi: $${fp(nequiHoy)}\n`;
@@ -527,12 +534,19 @@ async function enviarReporteMediodia() {
       }
     }
 
-    // Top 3 productos de la mañana
-    if (productos.length > 0) {
+    // Top 3 productos de la mañana (con valor)
+    const prodFiltrados = productos.filter(p => !( p.producto || p.nombre || '').toLowerCase().includes('preparac'));
+    if (prodFiltrados.length > 0) {
       msg += `\n📦 *Top productos esta mañana:*\n`;
       const medallas = ['🥇','🥈','🥉'];
-      productos.slice(0, 3).forEach((p, i) => {
-        msg += `${medallas[i]} *${p.producto || p.nombre}*: ${formatCantidadProducto(p)}\n`;
+      prodFiltrados.slice(0, 3).forEach((p, i) => {
+        const nombre = p.producto || p.nombre || '';
+        const cat = monitor.inferirCategoria(nombre, p.medida || '');
+        const esEsencia = cat.startsWith('ESENCIAS');
+        const uni = esEsencia ? 'gr' : 'uds';
+        const cantidad = p.unidades || p.cantidad || 0;
+        const val = (p.valor || 0) > 0 ? ` — $${fp(p.valor)}` : '';
+        msg += `${medallas[i]} *${nombre}*: ${cantidad} ${uni}${val}\n`;
       });
     }
 
