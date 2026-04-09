@@ -323,6 +323,8 @@ async function procesarMensaje(texto, esAdmin = true) {
     // Si escribió otra cosa, dejar que siga el flujo normal abajo
   }
 
+  const tLow = t.toLowerCase().trim();
+
   // Atajo directo por número de menú
   if (MENU_ACCIONES[t]) {
     const accion = MENU_ACCIONES[t];
@@ -366,7 +368,6 @@ async function procesarMensaje(texto, esAdmin = true) {
   }
 
   // ── Detección directa: checklist de contenido ──
-  const tLow = t.toLowerCase().trim();
 
   // "redes sociales para esta semana" / "plan de redes" → PLAN con copies
   if (/redes\s+sociales|plan.*redes|redes.*semana/.test(tLow)) {
