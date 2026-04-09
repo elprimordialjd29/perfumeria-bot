@@ -910,24 +910,28 @@ async function reporteRango(desde, hasta, titulo) {
     const haySales = total > 0;
     const medallas = ['🥇', '🥈', '🥉'];
 
+    const fp2 = (v) => Math.round(v).toLocaleString('es-CO');
+    const efectivo = cajeros.reduce((s, c) => s + (c.efectivo    || 0), 0);
+    const banco    = cajeros.reduce((s, c) => s + (c.bancolombia || 0), 0);
+    const nequi    = cajeros.reduce((s, c) => s + (c.nequi       || 0), 0);
+
     let msg = `📊 *REPORTE — ${tituloFinal}*\n`;
     msg += `_${desde} → ${hasta}_\n\n`;
-    msg += `💰 *Total: $${total.toLocaleString('es-CO')}*\n`;
-    msg += `🎫 Tickets: ${tickets}\n`;
-    if (tickets > 0) msg += `💵 Promedio ticket: $${Math.round(total / tickets).toLocaleString('es-CO')}\n`;
+    msg += `💰 *Total: $${fp2(total)}*\n`;
+    if (tickets > 0) {
+      msg += `🎫 Tickets: ${tickets}\n`;
+      msg += `💵 Promedio ticket: $${fp2(total / tickets)}\n`;
+    }
+    // Medios de pago
+    if (efectivo > 0) msg += `💵 Efectivo: $${fp2(efectivo)}\n`;
+    if (banco > 0)    msg += `🏦 Transferencia: $${fp2(banco)}\n`;
+    if (nequi > 0)    msg += `📱 Nequi: $${fp2(nequi)}\n`;
 
-    // Medios de pago (solo si cajeros tienen datos)
     if (cajeros.length > 0 && totalDeCajeros > 0) {
-      const efectivo  = cajeros.reduce((s, c) => s + (c.efectivo    || 0), 0);
-      const banco     = cajeros.reduce((s, c) => s + (c.bancolombia || 0), 0);
-      const nequi     = cajeros.reduce((s, c) => s + (c.nequi       || 0), 0);
-      if (efectivo > 0)  msg += `💵 Efectivo: $${efectivo.toLocaleString('es-CO')}\n`;
-      if (banco > 0)     msg += `🏦 Bancolombia: $${banco.toLocaleString('es-CO')}\n`;
-      if (nequi > 0)     msg += `📱 Nequi: $${nequi.toLocaleString('es-CO')}\n`;
       msg += `\n👥 *RANKING CAJEROS:*\n`;
       cajeros.forEach((c, i) => {
         const pct = total > 0 ? ((c.total / total) * 100).toFixed(0) : 0;
-        msg += `${medallas[i] || `${i + 1}.`} *${c.cajero}*: $${c.total.toLocaleString('es-CO')} (${pct}%) | ${c.tickets} tickets\n`;
+        msg += `${medallas[i] || `${i + 1}.`} *${c.cajero}*: $${fp2(c.total)} (${pct}%) | ${c.tickets} tickets\n`;
       });
     }
 
