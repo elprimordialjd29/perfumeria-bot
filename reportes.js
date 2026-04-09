@@ -27,9 +27,15 @@ function iniciar(bot) {
     await enviarReporteSemanal();
   }, { timezone: 'America/Bogota' });
 
+  // ── Detector de cierres de caja: cada 10 minutos ──
+  cron.schedule('*/10 * * * *', async () => {
+    await detectarNuevoCierre();
+  }, { timezone: 'America/Bogota' });
+
   console.log('✅ Reportes automáticos activados:');
   console.log('   🌅 Matutino (ayer + mes + inventario): 7:30 AM diario');
   console.log('   📅 Semanal: lunes 8:00 AM');
+  console.log('   🏧 Detector cierres de caja: cada 10 min');
 }
 
 // ──────────────────────────────────────────────
@@ -247,6 +253,94 @@ function calcularDiasRestantes() {
   const hoy = new Date();
   const ultimoDia = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
   return Math.max(1, ultimoDia - hoy.getDate());
+}
+
+// ──────────────────────────────────────────────
+// DETECTOR DE CIERRE DE CAJA
+// Revisa cada 10 min si hay un nuevo cierre. Si lo hay, envía reporte.
+// ──────────────────────────────────────────────
+
+async function detectarNuevoCierre() {
+  try {
+    const hoy = monitor.fechaHoy();
+    const fp  = (v) => Math.round(v).toLocaleString('es-CO');
+
+    // Leer último cierre conocido desde config
+    const cfg = await db.obtenerConfig();
+    let ultimoTurnoConocido = cfg?.ultimo_cierre || '';
+
+    // Obtener cierres de hoy
+    const { browser, page } = await monitor.crearSesionPOS();
+    const cierres = await monitor.extraerCierresCaja(page, hoy, hoy);
+
+    if (!cierres.length) { await browser.close(); return; }
+
+    // El turno más reciente del día
+    const ultimoCierre = cierres[cierres.length - 1];
+    const turnoId = `${ultimoCierre.fecha}|${ultimoCierre.turnos}`;
+
+    if (turnoId === ultimoTurnoConocido) { await browser.close(); return; } // sin cambios
+
+    // ── Nuevo cierre detectado ── obtener datos del día
+    const cajeros   = await monitor.extraerVentasCajero(page, hoy, hoy);
+    const productos = await monitor.extraerVentasProducto(page, hoy, hoy);
+    await browser.close();
+
+    // Guardar nuevo estado en config
+    await db.actualizarConfig({ ultimo_cierre: turnoId });
+
+    // ── Construir mensaje ──
+    const totalDia    = cajeros.reduce((s, c) => s + c.total, 0);
+    const ticketsDia  = cajeros.reduce((s, c) => s + c.tickets, 0);
+    const efectivoDia = cajeros.reduce((s, c) => s + (c.efectivo || 0), 0);
+    const bancoDia    = cajeros.reduce((s, c) => s + (c.bancolombia || 0), 0);
+    const nequiDia    = cajeros.reduce((s, c) => s + (c.nequi || 0), 0);
+
+    const meta       = parseInt(process.env.META_MENSUAL) || 10000000;
+    const diasEnMes  = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+    const metaDiaria = Math.round(meta / diasEnMes);
+    const faltaDia   = Math.max(0, metaDiaria - totalDia);
+    const pct        = Math.min(100, Math.round((totalDia / metaDiaria) * 100));
+    const barra      = Math.min(Math.round(pct / 10), 10);
+    const progreso   = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
+
+    // Extraer nombre del cajero del turno
+    const cajeroNombre = ultimoCierre.turnos?.split(' ').slice(-2).join(' ') || 'Cajero';
+
+    let msg = `🏧 *CIERRE DE CAJA — ${hoy}*\n`;
+    msg += `👤 *${cajeroNombre}*\n\n`;
+
+    msg += `💰 *Vendido hoy: $${fp(totalDia)}*\n`;
+    msg += `🎫 Tickets: ${ticketsDia}\n`;
+    if (efectivoDia > 0) msg += `💵 Efectivo: $${fp(efectivoDia)}\n`;
+    if (bancoDia > 0)    msg += `🏦 Bancolombia: $${fp(bancoDia)}\n`;
+    if (nequiDia > 0)    msg += `📱 Nequi: $${fp(nequiDia)}\n`;
+
+    msg += `\n🎯 *Meta del día: $${fp(metaDiaria)}*\n`;
+    msg += `${progreso} ${pct}%\n`;
+    if (faltaDia > 0) {
+      msg += `📉 Faltó: *$${fp(faltaDia)}*\n`;
+    } else {
+      msg += `🏆 *¡Meta del día cumplida!*\n`;
+    }
+
+    // Top 5 productos vendidos
+    if (productos.length > 0) {
+      msg += `\n📦 *Top productos hoy:*\n`;
+      productos.slice(0, 5).forEach((p, i) => {
+        const medallas = ['🥇','🥈','🥉','4️⃣','5️⃣'];
+        msg += `${medallas[i]} *${p.producto || p.nombre}*: ${p.unidades || p.cantidad || 0} uds\n`;
+      });
+    }
+
+    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+
+    await notificar('🏧 Cierre de Caja', msg);
+    console.log(`🏧 Cierre detectado y notificado: ${cajeroNombre}`);
+
+  } catch(e) {
+    console.error('Error detector cierre:', e.message);
+  }
 }
 
 module.exports = { iniciar, notificar, enviarReporteDiario, enviarReporteSemanal };
