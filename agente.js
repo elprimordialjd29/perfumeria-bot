@@ -13,7 +13,8 @@ const os = require('os');
 const path = require('path');
 
 const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+// Groq es opcional — si no hay key, se usa solo Claude
+const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
 const historial = [];
 
@@ -1413,6 +1414,7 @@ async function reporteProductos(desde, hasta, titulo) {
 // ──────────────────────────────────────────────
 
 async function analizarConIA(pregunta, datos) {
+  if (!groq) return null;
   try {
     const resp = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
