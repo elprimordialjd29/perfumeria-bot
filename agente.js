@@ -1897,7 +1897,13 @@ async function reporteRestock(soloAgotados = true) {
     // Filtrar según modo
     const bajos = inventario.filter(p => {
       if (soloAgotados) {
-        // Agotados (saldo=0) + críticos según umbral de la categoría
+        // Unidades (ORIGINALES, RÉPLICAS): solo si saldo = 0
+        const cat = (p.categoria || '').toUpperCase();
+        const esUnidad = !p.medida?.toLowerCase().match(/^(gr|g|ml)/);
+        if (esUnidad && (cat.includes('ORIGINAL') || cat.includes('REPLICA'))) {
+          return p.saldo <= 0;
+        }
+        // Esencias y envases con umbral específico: agotado o crítico
         const nivel = monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria);
         return nivel.includes('AGOTADO') || nivel.includes('CRÍTICO');
       }
