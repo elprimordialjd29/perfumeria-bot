@@ -17,13 +17,20 @@ const META_MENSUAL = parseInt(process.env.META_MENSUAL) || 10000000;
 // FORMATO DE FECHAS
 // ──────────────────────────────────────────────
 
+function fechaEnColombia(offsetDias = 0) {
+  // Colombia = UTC-5, siempre (no tiene horario de verano)
+  const ahora = new Date();
+  const colombia = new Date(ahora.getTime() - 5 * 60 * 60 * 1000 + offsetDias * 86400000);
+  return colombia.toISOString().split('T')[0];
+}
+
 function fechaHoy() {
-  return new Date().toISOString().split('T')[0];
+  return fechaEnColombia(0);
 }
 
 function fechaInicioMes() {
-  const hoy = new Date();
-  return `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-01`;
+  const hoy = fechaEnColombia(0);
+  return hoy.substring(0, 8) + '01'; // YYYY-MM-01
 }
 
 /** Convierte "1.553.000" (formato colombiano) → 1553000 */

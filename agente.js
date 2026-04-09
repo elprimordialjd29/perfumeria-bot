@@ -216,12 +216,17 @@ const MENU_ACCIONES = {
 };
 
 /** Retorna objeto con fechas de referencia relativas */
+// Colombia = UTC-5 (sin horario de verano)
+function ahoraColombia() {
+  return new Date(Date.now() - 5 * 60 * 60 * 1000);
+}
+
 function fechasRelativas() {
-  const hoy   = new Date();
-  const ayer  = new Date(hoy); ayer.setDate(hoy.getDate() - 1);
-  const antier= new Date(hoy); antier.setDate(hoy.getDate() - 2);
-  const diasDesdeElLunes = hoy.getDay() === 0 ? 6 : hoy.getDay() - 1;
-  const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - diasDesdeElLunes);
+  const hoy   = ahoraColombia();
+  const ayer  = new Date(hoy); ayer.setUTCDate(hoy.getUTCDate() - 1);
+  const antier= new Date(hoy); antier.setUTCDate(hoy.getUTCDate() - 2);
+  const diasDesdeElLunes = hoy.getUTCDay() === 0 ? 6 : hoy.getUTCDay() - 1;
+  const lunes = new Date(hoy); lunes.setUTCDate(hoy.getUTCDate() - diasDesdeElLunes);
   const fmt = d => d.toISOString().split('T')[0];
   return { hoy: fmt(hoy), ayer: fmt(ayer), antier: fmt(antier), lunes: fmt(lunes) };
 }
@@ -569,9 +574,9 @@ async function ejecutarAccion(rawOriginal) {
       if (!match) return '❌ No entendí el producto o las fechas.';
       const query  = match[1].trim();
       const r = fechasRelativas();
-      const hoy = new Date();
-      const primerDiaMesAnt = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1).toISOString().split('T')[0];
-      const ultimoDiaMesAnt = new Date(hoy.getFullYear(), hoy.getMonth(), 0).toISOString().split('T')[0];
+      const hoy = ahoraColombia();
+      const primerDiaMesAnt = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth() - 1, 1)).toISOString().split('T')[0];
+      const ultimoDiaMesAnt = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), 0)).toISOString().split('T')[0];
       const resolver = s => s
         .replace('HOY', r.hoy).replace('AYER', r.ayer).replace('ANTIER', r.antier)
         .replace('LUNES', r.lunes)
@@ -782,22 +787,19 @@ function bloquesMeta(total, desde, hasta) {
 // ──────────────────────────────────────────────
 
 async function reportesMesAnterior() {
-  const hoy = new Date();
-  const primerDiaMesAnt = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
-  const ultimoDiaMesAnt = new Date(hoy.getFullYear(), hoy.getMonth(), 0);
+  const hoy = ahoraColombia();
+  const primerDiaMesAnt = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth() - 1, 1));
+  const ultimoDiaMesAnt = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), 0));
   const desde = primerDiaMesAnt.toISOString().split('T')[0];
   const hasta = ultimoDiaMesAnt.toISOString().split('T')[0];
-  const nombreMes = primerDiaMesAnt.toLocaleString('es-CO', { month: 'long', year: 'numeric' });
+  const nombreMes = primerDiaMesAnt.toLocaleString('es-CO', { month: 'long', year: 'numeric', timeZone: 'UTC' });
   return await reporteRango(desde, hasta, `MES ANTERIOR — ${nombreMes.toUpperCase()}`);
 }
 
 async function reporteSemana() {
-  const hoy = new Date();
-  const lunes = new Date(hoy);
-  // getDay(): 0=domingo, 1=lunes, ..., 6=sábado
-  // Si es domingo (0) retroceder 6 días para llegar al lunes anterior
-  const diasDesdeElLunes = hoy.getDay() === 0 ? 6 : hoy.getDay() - 1;
-  lunes.setDate(hoy.getDate() - diasDesdeElLunes);
+  const hoy = ahoraColombia();
+  const diasDesdeElLunes = hoy.getUTCDay() === 0 ? 6 : hoy.getUTCDay() - 1;
+  const lunes = new Date(hoy); lunes.setUTCDate(hoy.getUTCDate() - diasDesdeElLunes);
   const desde = lunes.toISOString().split('T')[0];
   const hasta = monitor.fechaHoy();
   return await reporteRango(desde, hasta, 'ESTA SEMANA');
