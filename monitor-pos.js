@@ -417,6 +417,7 @@ const UMBRALES = {
   'ESENCIAS U':      { alerta: 300, critico: 200, medida: 'gr', restock: true  },
   'REPLICA 1.1':     { alerta: 1,   critico: 1,   medida: 'u',  restock: true  },
   'ORIGINALES':      { alerta: 1,   critico: 1,   medida: 'u',  restock: true  },
+  'ENVASE':          { alerta: 50,  critico: 10,  medida: 'u',  restock: true  },
   'INSUMOS VARIOS':  { alerta: 500, critico: 100, medida: 'u',  restock: false },
   'CREMA CORPORAL':  { alerta: 10,  critico: 3,   medida: 'u',  restock: true  },
 };
@@ -678,10 +679,7 @@ async function consultarAlertasInventario() {
     const prodKey = Object.keys(UMBRALES_PRODUCTO).find(k => nombreN.includes(k));
     if (prodKey) return p.saldo <= UMBRALES_PRODUCTO[prodKey].alerta;
 
-    // 2. Envases genéricos: NO alertar (solo los específicos de arriba)
-    if (cat.includes('ENVASE') || _inferirCategoria(p.nombre, p.medida) === 'ENVASE') return false;
-
-    // 3. Categoría general
+    // 2. Categoría general (incluye ENVASE con sus umbrales normales)
     const umbral = Object.entries(UMBRALES).find(([k]) => cat.includes(k));
     const limite = umbral ? umbral[1].alerta :
       (p.medida?.toLowerCase().includes('gr') || p.medida?.toLowerCase().includes('ml')) ? LIMITE_GRAMOS : LIMITE_UNIDADES;
