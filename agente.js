@@ -320,8 +320,12 @@ async function procesarMensaje(texto, esAdmin = true) {
   // ── Detección directa: checklist de contenido ──
   const tLow = t.toLowerCase().trim();
 
-  // "redes sociales para esta semana" / "plan de redes"
-  if (/redes\s+sociales|plan.*redes|redes.*semana|contenido.*semana|semana.*redes/.test(tLow)) {
+  // "redes sociales para esta semana" / "plan de redes" → PLAN con copies
+  if (/redes\s+sociales|plan.*redes|redes.*semana/.test(tLow)) {
+    return await planContenidoSemana();
+  }
+  // "checklist semana" → estado de publicaciones
+  if (/checklist.*(semana)|contenido.*semana|semana.*contenido/.test(tLow)) {
     return await checklistContenidoSemana();
   }
   // "checklist hoy" / "contenido de hoy" / "qué toca hoy" (sin "semana")
@@ -956,6 +960,66 @@ async function reporteRankingPOS(desde, hasta, titulo) {
 // ──────────────────────────────────────────────
 // CHECKLIST CONTENIDO REDES SOCIALES
 // ──────────────────────────────────────────────
+
+async function planContenidoSemana() {
+  const contenido = require('./contenido');
+  const hoy = new Date();
+  const diaSemana = hoy.getDay();
+  const diasDesdelunes = diaSemana === 0 ? 6 : diaSemana - 1;
+  const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - diasDesdelunes);
+  const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
+
+  const fmt = d => d.toISOString().split('T')[0];
+  const MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const semLabel = `${lunes.getDate()} ${MESES[lunes.getMonth()]} — ${domingo.getDate()} ${MESES[domingo.getMonth()]}`;
+  const letraSemana = contenido.getLetraSemana(fmt(lunes));
+
+  const partes = [];
+  let msg = `📋 *PLAN SEMANA ${semLabel}* _(${letraSemana})_\n`;
+  msg += `_SALMA PERFUM_\n\n`;
+
+  for (let i = 0; i < 7; i++) {
+    const dia = new Date(lunes); dia.setDate(lunes.getDate() + i);
+    const fecha = fmt(dia);
+    const diaKey = contenido.DIAS_ES[dia.getDay()];
+    const cal = contenido.getContenidoDe(fecha);
+    const nombre = contenido.getNombreDia(diaKey);
+    const esHoy = fecha === fmt(hoy);
+
+    let bloque = `*${nombre}${esHoy ? ' (hoy)' : ''}*\n`;
+    bloque += `📌 _${cal.tema}_\n\n`;
+
+    bloque += `📱 *WhatsApp:*\n${cal.whatsapp}\n\n`;
+
+    if (cal.instagram) {
+      bloque += `📸 *Instagram — ${cal.instagram.tipo}:*\n`;
+      bloque += `💡 ${cal.instagram.idea}\n`;
+      bloque += `_Copy:_ ${cal.instagram.copy}\n\n`;
+    } else {
+      bloque += `📸 Instagram: ➖ _No toca_\n\n`;
+    }
+
+    if (cal.tiktok) {
+      bloque += `🎵 *TikTok — ${cal.tiktok.tipo}:*\n`;
+      bloque += `💡 ${cal.tiktok.idea}\n`;
+      bloque += `_Copy:_ ${cal.tiktok.copy}\n\n`;
+    } else {
+      bloque += `🎵 TikTok: ➖ _No toca_\n\n`;
+    }
+
+    bloque += `─────────────────\n`;
+
+    if ((msg + bloque).length > 3800) {
+      partes.push(msg);
+      msg = `📋 _(continuación)_\n\n`;
+    }
+    msg += bloque;
+  }
+
+  partes.push(msg);
+  if (partes.length === 1) return partes[0];
+  return { tipo: 'mensajes', partes };
+}
 
 async function checklistContenidoHoy() {
   const contenido = require('./contenido');
