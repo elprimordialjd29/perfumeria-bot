@@ -53,15 +53,19 @@ function iniciar(bot) {
 async function notificar(asunto, mensaje) {
   const promesas = [];
 
-  // Telegram
-  if (telegramBot && adminId) {
-    promesas.push(
-      telegramBot.sendMessage(adminId, mensaje, { parse_mode: 'Markdown' })
-        .catch(e => {
-          // Fallback sin formato
-          return telegramBot.sendMessage(adminId, mensaje).catch(() => {});
-        })
-    );
+  // Telegram — admin + todos los usuarios autorizados
+  if (telegramBot) {
+    const usuarios = await db.listarUsuarios().catch(() => []);
+    const ids = new Set();
+    if (adminId) ids.add(String(adminId));
+    usuarios.forEach(u => ids.add(String(u.chatId)));
+
+    for (const id of ids) {
+      promesas.push(
+        telegramBot.sendMessage(id, mensaje, { parse_mode: 'Markdown' })
+          .catch(() => telegramBot.sendMessage(id, mensaje).catch(() => {}))
+      );
+    }
   }
 
   // Email
