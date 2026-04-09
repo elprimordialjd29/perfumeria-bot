@@ -1895,7 +1895,11 @@ async function reporteRestock(soloAgotados = true) {
 
     // Filtrar según modo
     const bajos = inventario.filter(p => {
-      if (soloAgotados) return p.saldo <= 0;
+      if (soloAgotados) {
+        // Agotados (saldo=0) + críticos según umbral de la categoría
+        const nivel = monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria);
+        return nivel === 'AGOTADO' || nivel === 'CRÍTICO';
+      }
       // Todos los bajos según umbrales
       if (p.medida && (p.medida.toLowerCase().includes('gr') || p.medida.toLowerCase().includes('ml'))) {
         return p.saldo < 500;
@@ -1904,7 +1908,7 @@ async function reporteRestock(soloAgotados = true) {
     }).sort((a, b) => a.saldo - b.saldo);
 
     if (!bajos.length) return soloAgotados
-      ? '✅ No hay productos agotados.'
+      ? '✅ No hay productos agotados ni críticos.'
       : '✅ *Restock:* Todos los productos tienen stock suficiente.';
 
     const tieneCostos = bajos.some(p => p.costoUnidad > 0);
@@ -1949,7 +1953,7 @@ async function reporteRestock(soloAgotados = true) {
     });
 
     const encabezado = soloAgotados
-      ? `🚨 *AGOTADOS (${bajos.length} productos)*\n\n`
+      ? `🚨 *LO QUE FALTA (${bajos.length} productos)*\n\n`
       : `💰 *RESTOCK COMPLETO (${bajos.length} productos bajos)*\n\n`;
     const partes = [];
     let parteActual = encabezado;
