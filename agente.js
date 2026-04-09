@@ -936,7 +936,8 @@ async function reporteRango(desde, hasta, titulo) {
       productos.forEach((p, i) => {
         const cat = monitor.inferirCategoria(p.nombre);
         const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-        msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}\n`;
+        const val = p.valor > 0 ? ` — $${monitor.formatPesos(p.valor)}` : '';
+        msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}${val}\n`;
       });
     }
 
@@ -1712,7 +1713,8 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
       productos.forEach((p, i) => {
         const cat = monitor.inferirCategoria(p.nombre);
         const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-        msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}\n`;
+        const val = p.valor > 0 ? ` — $${monitor.formatPesos(p.valor)}` : '';
+        msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}${val}\n`;
       });
     }
 
