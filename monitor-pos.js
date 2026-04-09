@@ -815,19 +815,50 @@ function generarMensajeAlertas(resultado) {
     return `✅ *INVENTARIO OK*\n\nTodos los productos están sobre los límites mínimos.\n_(${total} productos revisados)_`;
   }
 
+  const todas = [...(resultado.alertas || [
+    ...(alertasGramos || []),
+    ...(alertasUnidades || []),
+  ])];
+
   let msg = `⚠️ *ALERTAS DE INVENTARIO*\n_(${total} productos revisados)_\n`;
 
-  if (alertasGramos.length > 0) {
-    msg += `\n🔴 *GRAMOS BAJOS (< ${LIMITE_GRAMOS}g)*\n`;
-    alertasGramos.forEach(p => {
-      msg += `${getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria)} ${p.nombre}: *${p.saldo}g*\n`;
+  // Agrupar por categoría
+  const ORDEN_CATS = [
+    { key: 'ESENCIAS M',     emoji: '🧪', label: 'ESENCIAS M (masculinas)' },
+    { key: 'ESENCIAS F',     emoji: '🌸', label: 'ESENCIAS F (femeninas)'  },
+    { key: 'ESENCIAS U',     emoji: '🌿', label: 'ESENCIAS U (unisex)'     },
+    { key: 'ENVASE',         emoji: '🧴', label: 'ENVASES'                 },
+    { key: 'ORIGINALES',     emoji: '✨', label: 'ORIGINALES'              },
+    { key: 'REPLICA 1.1',    emoji: '🔁', label: 'RÉPLICAS 1.1'           },
+    { key: 'CREMA CORPORAL', emoji: '🧴', label: 'CREMAS CORPORALES'       },
+    { key: 'INSUMOS VARIOS', emoji: '🔧', label: 'INSUMOS VARIOS'          },
+  ];
+
+  for (const cat of ORDEN_CATS) {
+    const prods = todas.filter(p => {
+      const c = (p.categoria || _inferirCategoria(p.nombre, p.medida)).toUpperCase();
+      return c.includes(cat.key);
+    });
+    if (prods.length === 0) continue;
+
+    msg += `\n${cat.emoji} *${cat.label}*\n`;
+    prods.forEach(p => {
+      const unidad = (p.medida || '').toLowerCase().match(/^(gr|g|ml)/) ? `${p.saldo}g` : `${p.saldo} u`;
+      msg += `${getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria)} *${p.nombre}*: ${unidad}\n`;
     });
   }
 
-  if (alertasUnidades.length > 0) {
-    msg += `\n🟡 *UNIDADES BAJAS (< ${LIMITE_UNIDADES}u)*\n`;
-    alertasUnidades.forEach(p => {
-      msg += `${getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria)} ${p.nombre}: *${p.saldo} u*\n`;
+  // Productos sin categoría reconocida
+  const conocidas = ORDEN_CATS.map(c => c.key);
+  const otros = todas.filter(p => {
+    const c = (p.categoria || _inferirCategoria(p.nombre, p.medida)).toUpperCase();
+    return !conocidas.some(k => c.includes(k));
+  });
+  if (otros.length > 0) {
+    msg += `\n📦 *OTROS*\n`;
+    otros.forEach(p => {
+      const unidad = (p.medida || '').toLowerCase().match(/^(gr|g|ml)/) ? `${p.saldo}g` : `${p.saldo} u`;
+      msg += `${getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria)} *${p.nombre}*: ${unidad}\n`;
     });
   }
 
