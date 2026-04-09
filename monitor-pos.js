@@ -226,12 +226,16 @@ async function extraerVentasCajero(page, fechaInicial, fechaFinal) {
     porCajero[c.cajero].total       += c.total;
   }
 
-  // Fallback: si todos los totales son 0 pero hay tickets, recalcular total
-  // sumando los medios de pago conocidos
   const agrupados = Object.values(porCajero);
   for (const c of agrupados) {
+    // Si total = 0 pero hay medios de pago, recalcular
     if (c.total === 0 && (c.efectivo + c.bancolombia + c.nequi) > 0) {
       c.total = c.efectivo + c.bancolombia + c.nequi;
+    }
+    // Si nequi ≈ total y efectivo+bancolombia ya cubre el total,
+    // significa que nequi capturó la columna del total por error → corregir
+    if (c.nequi > 0 && Math.abs(c.nequi - c.total) < 1 && (c.efectivo + c.bancolombia) > 0) {
+      c.nequi = Math.max(0, c.total - c.efectivo - c.bancolombia);
     }
   }
 
