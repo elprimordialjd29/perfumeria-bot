@@ -1085,7 +1085,7 @@ async function reporteGastos(desde, hasta, titulo) {
     const fp = monitor.formatPesos;
     const totalGastos = gastos.reduce((s, g) => s + g.valor, 0);
 
-    // Agrupar por concepto
+    // Agrupar por concepto (NombreProducto)
     const porConcepto = {};
     for (const g of gastos) {
       if (!porConcepto[g.concepto]) porConcepto[g.concepto] = 0;
@@ -1096,14 +1096,15 @@ async function reporteGastos(desde, hasta, titulo) {
     const partes = [];
     let msg = `💸 *GASTOS — ${titulo}*\n`;
     msg += `_${desde} → ${hasta}_\n\n`;
-    msg += `📋 *Detalle (${gastos.length} registros):*\n`;
+    msg += `📋 *Detalle (${gastos.length} registros):*\n\n`;
 
     gastos.forEach(g => {
-      let linea = `• *${g.concepto}*`;
-      if (g.detalle && g.detalle !== g.concepto) linea += ` — ${g.detalle}`;
-      if (g.tercero) linea += ` _(${g.tercero})_`;
-      linea += g.valor > 0 ? `: *$${fp(g.valor)}*` : ': $0';
-      if (g.fecha) linea += `\n  📅 ${g.fecha}`;
+      let linea = `• *${g.concepto}*: *$${fp(g.valor)}*\n`;
+      if (g.detalle)   linea += `  📝 ${g.detalle}\n`;
+      if (g.proveedor) linea += `  👤 ${g.proveedor}\n`;
+      if (g.medioPago) linea += `  💳 ${g.medioPago}\n`;
+      if (g.documento) linea += `  📄 Doc: ${g.documento}\n`;
+      if (g.fecha)     linea += `  📅 ${g.fecha}\n`;
       linea += '\n';
 
       if ((msg + linea).length > 3800) { partes.push(msg); msg = `💸 _(continuación)_\n\n`; }
@@ -1111,7 +1112,7 @@ async function reporteGastos(desde, hasta, titulo) {
     });
 
     // Resumen por concepto
-    msg += `\n─────────────────\n`;
+    msg += `─────────────────\n`;
     msg += `📊 *Por concepto:*\n`;
     conceptosOrdenados.forEach(([c, v]) => {
       const pct = totalGastos > 0 ? ((v / totalGastos) * 100).toFixed(0) : 0;

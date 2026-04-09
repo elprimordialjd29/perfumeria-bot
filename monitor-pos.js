@@ -786,6 +786,9 @@ function generarMensajeAlertas(resultado) {
 // ──────────────────────────────────────────────
 
 async function extraerGastos(page, fechaInicial, fechaFinal) {
+  // Columnas reales de compras/gastos en VectorPOS:
+  // [0] NombreProducto | [1] Valor | [2] Detalle | [3] Proveedor
+  // [4] Documento | [5] Medio Pago | [6] Fecha
   const url = `${BASE}/index.php?r=compras%2Fgastos&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
   await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
 
@@ -798,42 +801,27 @@ async function extraerGastos(page, fechaInicial, fechaFinal) {
     return rows;
   });
 
-  // Detectar fila de encabezados para mapear columnas dinámicamente
-  let iConcepto = 0, iDetalle = 1, iTercero = 2, iFecha = 3, iValor = 4;
-  const headerRow = filas.find(f =>
-    f.some(c => c.toLowerCase().includes('concepto') || c.toLowerCase().includes('gasto'))
-  );
-  if (headerRow) {
-    console.log('📋 Columnas gastos:', headerRow.join(' | '));
-    headerRow.forEach((col, i) => {
-      const c = col.toLowerCase();
-      if (c.includes('concepto') || c.includes('gasto'))   iConcepto = i;
-      else if (c.includes('detalle') || c.includes('desc')) iDetalle  = i;
-      else if (c.includes('tercero') || c.includes('prov')) iTercero  = i;
-      else if (c.includes('fecha'))                          iFecha    = i;
-      else if (c.includes('valor') || c.includes('total') || c.includes('monto')) iValor = i;
-    });
-  }
+  if (filas[0]) console.log('📋 Columnas gastos:', filas[0].join(' | '));
 
   const gastos = [];
   for (const fila of filas) {
-    if (!fila[iConcepto]) continue;
-    const concepto = fila[iConcepto];
-    if (concepto === 'Concepto' || concepto === 'Total' || concepto === 'Gasto') continue;
-
-    // Parsear valor solo desde la columna detectada
-    const valor = parsearMonto(fila[iValor] || '');
+    const concepto = fila[0] || '';
+    // Saltar encabezado y filas de total
+    if (!concepto || concepto === 'NombreProducto' || concepto === 'Total' ||
+        concepto === 'Concepto' || concepto === 'Gasto') continue;
 
     gastos.push({
       concepto,
-      detalle: fila[iDetalle] || '',
-      tercero: fila[iTercero] || '',
-      fecha:   fila[iFecha]   || '',
-      valor,
+      valor:     parsearMonto(fila[1] || ''),
+      detalle:   fila[2] || '',
+      proveedor: fila[3] || '',
+      documento: fila[4] || '',
+      medioPago: fila[5] || '',
+      fecha:     fila[6] || '',
     });
   }
 
-  console.log(`💸 ${gastos.length} gastos extraídos. Ejemplo:`, gastos[0]);
+  console.log(`💸 ${gastos.length} gastos. Ejemplo:`, JSON.stringify(gastos[0]));
   return gastos;
 }
 
