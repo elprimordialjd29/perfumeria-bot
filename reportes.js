@@ -115,19 +115,20 @@ async function notificar(asunto, mensaje) {
 
 async function enviarReporteMatutino() {
   try {
-    const hoy   = new Date();
-    const ayer  = new Date(hoy); ayer.setDate(hoy.getDate() - 1);
+    const hoy   = new Date(Date.now() - 5 * 60 * 60 * 1000); // UTC-5 Colombia
+    const ayer  = new Date(hoy); ayer.setUTCDate(hoy.getUTCDate() - 1);
     const fAyer = ayer.toISOString().split('T')[0];
     const meta  = parseInt(process.env.META_MENSUAL) || 10000000;
-    const labelAyer = ayer.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' });
-    const diasEnMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
-    const diasRestantes = Math.max(1, diasEnMes - hoy.getDate());
+    const labelAyer = ayer.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+    const diasEnMes = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth() + 1, 0)).getUTCDate();
+    const diasRestantes = Math.max(1, diasEnMes - hoy.getUTCDate());
     const metaDiaria = Math.round(meta / diasEnMes);
     const medallas = ['🥇', '🥈', '🥉'];
 
-    // ── 1. Ventas de ayer (sesión propia) ──
+    // ── 1. Ventas de ayer (cajeros + productos) ──
     const { browser: b1, page: p1 } = await monitor.crearSesionPOS();
-    const cajerosAyer = await monitor.extraerVentasCajero(p1, fAyer, fAyer);
+    const cajerosAyer   = await monitor.extraerVentasCajero(p1, fAyer, fAyer);
+    const productosAyer = await monitor.extraerVentasProducto(p1, fAyer, fAyer);
     await b1.close();
 
     const totalAyer   = cajerosAyer.reduce((s, c) => s + c.total,   0);
@@ -143,7 +144,7 @@ async function enviarReporteMatutino() {
     const barra = Math.min(Math.round(Number(pctMeta) / 10), 10);
     const progreso = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
 
-    const encabezado = `🌅 *BUENOS DÍAS — ${hoy.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }).toUpperCase()}*`;
+    const encabezado = `🌅 *BUENOS DÍAS — ${hoy.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }).toUpperCase()}*`;
 
     // Mensaje 1: ayer + mes
     let msg1 = `${encabezado}\n\n`;
@@ -159,6 +160,17 @@ async function enviarReporteMatutino() {
       });
     } else {
       msg1 += `_Sin ventas registradas ayer_\n`;
+    }
+
+    // Top productos de ayer (sin preparaciones)
+    const prodFiltrados = (productosAyer || []).filter(p =>
+      !( p.producto || p.nombre || '').toLowerCase().includes('preparac')
+    );
+    if (prodFiltrados.length > 0) {
+      msg1 += `\n📦 *Productos vendidos ayer:*\n`;
+      prodFiltrados.slice(0, 10).forEach((p, i) => {
+        msg1 += `${i + 1}. *${p.producto || p.nombre}*: ${formatCantidadProducto(p)}\n`;
+      });
     }
 
     msg1 += `\n📊 *AVANCE DEL MES*\n`;
