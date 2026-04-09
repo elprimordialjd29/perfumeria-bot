@@ -1160,81 +1160,92 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
     const partes = [];
     let msg = titulo;
 
-    // ── Sesión activa hoy (solo si el rango incluye hoy) ──
-    if (hasta === hoy) {
-      const activosHoy = cajerosHoy.filter(c =>
-        c.tickets > 0 && (!filtro || c.cajero.toLowerCase().includes(filtro))
-      );
-      if (activosHoy.length > 0) {
-        const totalHoy    = activosHoy.reduce((s, c) => s + c.total, 0);
-        const efectivoHoy = activosHoy.reduce((s, c) => s + (c.efectivo || 0), 0);
-        const bancoHoy    = activosHoy.reduce((s, c) => s + (c.bancolombia || 0), 0);
-        const nequiHoy    = activosHoy.reduce((s, c) => s + (c.nequi || 0), 0);
-        const pct         = Math.min(100, Math.round((totalHoy / metaDiaria) * 100));
-        const progreso    = '🟩'.repeat(Math.round(pct/10)) + '⬜'.repeat(10 - Math.round(pct/10));
-        const falta       = Math.max(0, metaDiaria - totalHoy);
-
-        msg += `📅 *HOY — ${hoy}*\n`;
-        activosHoy.forEach(c => msg += `👤 *${c.cajero}* | 🎫 ${c.tickets} tickets\n`);
-        msg += `\n💰 *Total: $${fp(totalHoy)}*\n`;
-        if (efectivoHoy > 0) msg += `   💵 Efectivo: $${fp(efectivoHoy)}\n`;
-        if (bancoHoy > 0)    msg += `   🏦 Bancolombia: $${fp(bancoHoy)}\n`;
-        if (nequiHoy > 0)    msg += `   📱 Nequi: $${fp(nequiHoy)}\n`;
-        msg += `\n🎯 Meta día: $${fp(metaDiaria)}\n${progreso} ${pct}%\n`;
-        msg += falta > 0 ? `📉 Falta: *$${fp(falta)}*\n` : `🏆 *¡Meta cumplida!*\n`;
-        msg += `\n`;
-      }
-    }
-
-    // ── Días anteriores con valores ──
-    const diasPasados = cierres.filter(c => c.fecha !== hoy);
-    if (diasPasados.length > 0) {
-      msg += `─────────────────\n📋 *Turnos:*\n\n`;
-
-      for (const c of diasPasados) {
-        // Extraer nombre cajero del campo turnos: "Caja 1 / Turno 1 DATE TIME NOMBRE APELLIDO"
-        const partesTurno = (c.turnos || '').split(' ');
-        const nombreCajero = partesTurno.slice(-2).join(' ');
-        if (filtro && !nombreCajero.toLowerCase().includes(filtro)) continue;
-
-        // Buscar ventas de ese cajero ese día en cajerosRango
-        // (cajerosRango es agregado del período, no por día — usamos el cierre como referencia)
-        msg += `📅 *${c.fecha}*\n`;
-        msg += `👤 ${nombreCajero}\n`;
-        if (c.turnos) msg += `   ⏰ ${c.turnos.match(/\d{2}:\d{2}:\d{2}/)?.[0] || ''}\n`;
-        msg += `\n`;
-
-        if (msg.length > 3500) { partes.push(msg); msg = `🏧 _(continuación)_\n\n`; }
-      }
-    }
-
-    // ── Totales del período ──
+    // ── Cajeros del período (filtrando por nombre si aplica) ──
     const cajerosF = cajerosRango.filter(c =>
       !filtro || c.cajero.toLowerCase().includes(filtro)
     );
-    if (cajerosF.length > 0 && desde !== hasta) {
-      const totalP    = cajerosF.reduce((s, c) => s + c.total, 0);
-      const efectivoP = cajerosF.reduce((s, c) => s + (c.efectivo || 0), 0);
-      const bancoP    = cajerosF.reduce((s, c) => s + (c.bancolombia || 0), 0);
-      const nequiP    = cajerosF.reduce((s, c) => s + (c.nequi || 0), 0);
-      const ticketsP  = cajerosF.reduce((s, c) => s + c.tickets, 0);
 
-      msg += `─────────────────\n`;
-      msg += `📊 *TOTAL DEL PERÍODO*\n`;
-      msg += `💰 *$${fp(totalP)}* | 🎫 ${ticketsP} tickets\n`;
-      if (efectivoP > 0) msg += `💵 Efectivo: $${fp(efectivoP)}\n`;
-      if (bancoP > 0)    msg += `🏦 Bancolombia: $${fp(bancoP)}\n`;
-      if (nequiP > 0)    msg += `📱 Nequi: $${fp(nequiP)}\n`;
-      if (cajerosF.length > 1) {
-        msg += `\n👥 *Por cajero:*\n`;
+    // ── Día único: mostrar estado completo ──
+    if (desde === hasta) {
+      const fecha = desde;
+      const esHoy = fecha === hoy;
+      msg += `📅 *${esHoy ? 'HOY' : fecha} — ${fecha}*\n\n`;
+
+      if (cajerosF.length === 0) {
+        msg += `_Sin ventas registradas_\n\n`;
+      } else {
         cajerosF.forEach(c => {
-          msg += `• *${c.cajero}*: $${fp(c.total)} (${c.tickets} tkt)\n`;
-          if (c.efectivo > 0)    msg += `   💵 $${fp(c.efectivo)}\n`;
-          if (c.bancolombia > 0) msg += `   🏦 $${fp(c.bancolombia)}\n`;
-          if (c.nequi > 0)       msg += `   📱 $${fp(c.nequi)}\n`;
+          msg += `👤 *${c.cajero}* | 🎫 ${c.tickets} tickets\n`;
+          if (c.total > 0)        msg += `   💰 Total: *$${fp(c.total)}*\n`;
+          if (c.efectivo > 0)     msg += `   💵 Efectivo: $${fp(c.efectivo)}\n`;
+          if (c.bancolombia > 0)  msg += `   🏦 Bancolombia: $${fp(c.bancolombia)}\n`;
+          if (c.nequi > 0)        msg += `   📱 Nequi: $${fp(c.nequi)}\n`;
+          msg += `\n`;
+        });
+
+        if (esHoy) {
+          const totalHoy = cajerosF.reduce((s, c) => s + c.total, 0);
+          const pct      = Math.min(100, Math.round((totalHoy / metaDiaria) * 100));
+          const barra    = Math.min(Math.round(pct / 10), 10);
+          const progreso = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
+          const falta    = Math.max(0, metaDiaria - totalHoy);
+          msg += `🎯 *Meta del día: $${fp(metaDiaria)}*\n`;
+          msg += `${progreso} ${pct}%\n`;
+          msg += falta > 0 ? `📉 Falta: *$${fp(falta)}*\n` : `🏆 *¡Meta cumplida!*\n`;
+        }
+      }
+
+      // Cierres del día
+      const cierresDia = cierres.filter(c => c.fecha === fecha);
+      if (cierresDia.length > 0) {
+        msg += `\n📋 *Turno${cierresDia.length > 1 ? 's' : ''}:*\n`;
+        cierresDia.forEach(c => {
+          const hora = c.turnos?.match(/\d{2}:\d{2}:\d{2}/)?.[0] || '';
+          const cajero = (c.turnos || '').split(' ').slice(-2).join(' ');
+          msg += `   ⏰ ${hora} — ${cajero}\n`;
         });
       }
-    }
+
+    } else {
+      // ── Rango múltiple: cierres por día ──
+      if (cierres.length > 0) {
+        msg += `📋 *Turnos:*\n\n`;
+        for (const c of cierres) {
+          const partesTurno = (c.turnos || '').split(' ');
+          const nombreCajero = partesTurno.slice(-2).join(' ');
+          if (filtro && !nombreCajero.toLowerCase().includes(filtro)) continue;
+          const hora = c.turnos?.match(/\d{2}:\d{2}:\d{2}/)?.[0] || '';
+          msg += `📅 *${c.fecha}* — 👤 ${nombreCajero} ⏰ ${hora}\n`;
+          if (msg.length > 3500) { partes.push(msg); msg = `🏧 _(continuación)_\n\n`; }
+        }
+        msg += `\n`;
+      }
+
+      // ── Totales del período ──
+      if (cajerosF.length > 0) {
+        const totalP    = cajerosF.reduce((s, c) => s + c.total, 0);
+        const efectivoP = cajerosF.reduce((s, c) => s + (c.efectivo || 0), 0);
+        const bancoP    = cajerosF.reduce((s, c) => s + (c.bancolombia || 0), 0);
+        const nequiP    = cajerosF.reduce((s, c) => s + (c.nequi || 0), 0);
+        const ticketsP  = cajerosF.reduce((s, c) => s + c.tickets, 0);
+
+        msg += `─────────────────\n`;
+        msg += `📊 *TOTAL DEL PERÍODO*\n`;
+        msg += `💰 *$${fp(totalP)}* | 🎫 ${ticketsP} tickets\n`;
+        if (efectivoP > 0) msg += `💵 Efectivo: $${fp(efectivoP)}\n`;
+        if (bancoP > 0)    msg += `🏦 Bancolombia: $${fp(bancoP)}\n`;
+        if (nequiP > 0)    msg += `📱 Nequi: $${fp(nequiP)}\n`;
+        if (cajerosF.length > 1) {
+          msg += `\n👥 *Por cajero:*\n`;
+          cajerosF.forEach(c => {
+            msg += `• *${c.cajero}*: $${fp(c.total)} (${c.tickets} tkt)\n`;
+            if (c.efectivo > 0)    msg += `   💵 $${fp(c.efectivo)}\n`;
+            if (c.bancolombia > 0) msg += `   🏦 $${fp(c.bancolombia)}\n`;
+            if (c.nequi > 0)       msg += `   📱 $${fp(c.nequi)}\n`;
+          });
+        }
+      }
+    } // fin else rango múltiple
 
     msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
     partes.push(msg);
