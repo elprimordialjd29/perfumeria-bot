@@ -61,10 +61,9 @@ async function iniciar() {
   // Iniciar reportes automáticos
   reportes.iniciar(bot);
 
-  // Mensaje de bienvenida al admin (dos pasos)
+  // Mensaje de bienvenida con menú directo
   try {
     await bot.sendMessage(ADMIN_ID, agente.mensajeBienvenida(), { parse_mode: 'Markdown' });
-    agente.activarEsperaEleccion();
   } catch(e) {
     console.log('ℹ️  No se pudo enviar mensaje de bienvenida (normal en primer inicio)');
   }

@@ -2261,7 +2261,7 @@ async function quitarUsuarioAutorizado(chatId) {
 }
 
 function mensajeBienvenida() {
-  return `👋 *¡Hola jefe, qué gusto saludarte!*\n\n¿Cómo te puedo ayudar?\n\n1️⃣ Ver menú de opciones\n2️⃣ Pregúntame algo`;
+  return `👋 *¡Hola jefe, qué vas a hacer hoy?*\n\n` + mensajeMenu();
 }
 
 function mensajeMenu() {
