@@ -881,21 +881,79 @@ async function reporteSemana() {
   return await reporteRango(desde, hasta, 'ESTA SEMANA');
 }
 
+// ──────────────────────────────────────────────
+// PROCESAR FACTURAS → PRODUCTOS CON VALORES EXACTOS
+// ──────────────────────────────────────────────
+
+/**
+ * Agrupa facturas (con detalle de items) por producto,
+ * distribuyendo servicios (recarga/preparación) y descuentos
+ * proporcionalmente dentro de cada factura.
+ * @returns {Array} [{nombre, cantidad, valorProd, valorServicio, descuento, valorNeto}]
+ */
+function procesarFacturasParaProductos(facturas) {
+  const esServ = (n) => /(preparac|recarga)/i.test(n);
+  const mapa = {};
+
+  facturas.forEach(factura => {
+    if (!factura.items || factura.items.length === 0) return;
+    const prods = factura.items.filter(i => !esServ(i.nombre));
+    const servs = factura.items.filter(i =>  esServ(i.nombre));
+    const totalServs = servs.reduce((s, i) => s + i.valor, 0);
+    const totalProds = prods.reduce((s, i) => s + i.valor, 0);
+
+    prods.forEach(prod => {
+      const key = prod.nombre.toLowerCase().trim();
+      if (!mapa[key]) mapa[key] = { nombre: prod.nombre, cantidad: 0, valorProd: 0, valorServicio: 0, descuento: 0 };
+
+      // Servicio proporcional al valor del producto dentro de la factura
+      const srvProp  = totalProds > 0 && totalServs > 0
+        ? Math.round((prod.valor / totalProds) * totalServs) : 0;
+      // Descuento proporcional al subtotal (prod + serv)
+      const base      = totalProds + totalServs;
+      const descProp  = base > 0 && factura.descuento > 0
+        ? Math.round(((prod.valor + srvProp) / base) * factura.descuento) : 0;
+
+      mapa[key].cantidad     += prod.cantidad;
+      mapa[key].valorProd    += prod.valor;
+      mapa[key].valorServicio += srvProp;
+      mapa[key].descuento    += descProp;
+    });
+  });
+
+  return Object.values(mapa)
+    .map(p => ({ ...p, valorNeto: p.valorProd + p.valorServicio - p.descuento }))
+    .sort((a, b) => b.valorNeto - a.valorNeto);
+}
+
 async function reporteRango(desde, hasta, titulo) {
   const tituloFinal = titulo || `${desde} al ${hasta}`;
+  const esDiaUnico  = desde === hasta;
   try {
-    const { browser, page } = await monitor.crearSesionPOS();
-    const ventas    = await monitor.extraerVentasGenerales(page, desde, hasta);
-    const cajeros   = await monitor.extraerVentasCajero(page, desde, hasta);
-    const prodRaw   = await monitor.extraerVentasProducto(page, desde, hasta);
-    const horasData = await monitor.extraerVentasPorHora(page, desde, hasta);
-    await browser.close();
+    // Correr sesión POS e histórico de facturas en paralelo
+    const [posData, facturas] = await Promise.all([
+      (async () => {
+        const { browser, page } = await monitor.crearSesionPOS();
+        const ventas    = await monitor.extraerVentasGenerales(page, desde, hasta);
+        const cajeros   = await monitor.extraerVentasCajero(page, desde, hasta);
+        const prodRaw   = await monitor.extraerVentasProducto(page, desde, hasta);
+        const horasData = await monitor.extraerVentasPorHora(page, desde, hasta);
+        await browser.close();
+        return { ventas, cajeros, prodRaw, horasData };
+      })(),
+      monitor.extraerHistoricoFacturas(desde, hasta, esDiaUnico)
+        .catch(e => { console.error('⚠️ Histórico facturas:', e.message); return []; }),
+    ]);
 
-    const preparaciones = prodRaw.filter(p => p.nombre.toLowerCase().includes('preparac'));
+    const { ventas, cajeros, prodRaw, horasData } = posData;
+
+    // Preparación y recarga = servicio de llenado, no productos físicos
+    const esServicio = (nombre) => /(preparac|recarga)/i.test(nombre);
+    const preparaciones      = prodRaw.filter(p => esServicio(p.nombre));
     const totalPreparaciones = preparaciones.reduce((s, p) => s + (p.valor || 0), 0);
 
-    const productos = prodRaw
-      .filter(p => !p.nombre.toLowerCase().includes('preparac'))
+    const prodsPOS = prodRaw
+      .filter(p => !esServicio(p.nombre))
       .sort((a, b) => b.cantidad - a.cantidad)
       .slice(0, 10);
 
@@ -905,27 +963,27 @@ async function reporteRango(desde, hasta, titulo) {
     const ticketsDeCajeros = cajeros.reduce((s, c) => s + c.tickets, 0);
     const totalDeVentas    = ventas.reduce((s, v)  => s + v.totalVentas, 0);
     const ticketsDeVentas  = ventas.reduce((s, v)  => s + v.tickets,     0);
-    // Fallback: si cajeros y ventas generales dan 0, usar suma de productos
     const totalDeProductos = prodRaw.reduce((s, p) => s + p.valor, 0);
 
     const total   = totalDeCajeros   > 0 ? totalDeCajeros   : totalDeVentas   > 0 ? totalDeVentas   : totalDeProductos;
     const tickets = ticketsDeCajeros > 0 ? ticketsDeCajeros : ticketsDeVentas > 0 ? ticketsDeVentas : 0;
     const haySales = total > 0;
     const medallas = ['🥇', '🥈', '🥉'];
+    const fp2 = monitor.formatPesos;
 
-    const fp2 = (v) => Math.round(v).toLocaleString('es-CO');
     const efectivo = cajeros.reduce((s, c) => s + (c.efectivo    || 0), 0);
     const banco    = cajeros.reduce((s, c) => s + (c.bancolombia || 0), 0);
     const nequi    = cajeros.reduce((s, c) => s + (c.nequi       || 0), 0);
+    const totalDescFacturas = facturas.reduce((s, f) => s + (f.descuento || 0), 0);
 
     let msg = `📊 *REPORTE — ${tituloFinal}*\n`;
     msg += `_${desde} → ${hasta}_\n\n`;
     msg += `💰 *Total: $${fp2(total)}*\n`;
+    if (totalDescFacturas > 0) msg += `🏷️ Descuentos aplicados: $${fp2(totalDescFacturas)}\n`;
     if (tickets > 0) {
       msg += `🎫 Tickets: ${tickets}\n`;
       msg += `💵 Promedio ticket: $${fp2(total / tickets)}\n`;
     }
-    // Medios de pago
     if (efectivo > 0) msg += `💵 Efectivo: $${fp2(efectivo)}\n`;
     if (banco > 0)    msg += `🏦 Transferencia: $${fp2(banco)}\n`;
     if (nequi > 0)    msg += `📱 Nequi: $${fp2(nequi)}\n`;
@@ -938,33 +996,53 @@ async function reporteRango(desde, hasta, titulo) {
       });
     }
 
-    // Primera venta y productos — solo si hay ventas
     if (haySales) {
       if (primeraHoraRango) {
         const h = primeraHoraRango.hora;
         const ampm = h >= 12 ? 'PM' : 'AM';
-        const h12  = h % 12 || 12;
-        msg += `\n🕐 *Primera venta:* ${h12}:00 ${ampm}\n`;
+        msg += `\n🕐 *Primera venta:* ${h % 12 || 12}:00 ${ampm}\n`;
       }
 
-      if (productos.length > 0) {
+      // ── Decidir fuente de datos de productos ──
+      // Si facturas tienen detalle (items), usar datos exactos; si no, distribución proporcional
+      const facturasConItems = facturas.filter(f => f.items?.length > 0);
+      const usarFacturas = facturasConItems.length > 0;
+
+      let productosAMostrar = [];
+      if (usarFacturas) {
+        productosAMostrar = procesarFacturasParaProductos(facturasConItems).slice(0, 10);
+      } else {
+        const sumaProd = prodsPOS.reduce((s, p) => s + (p.valor || 0), 0);
+        productosAMostrar = prodsPOS.map(p => {
+          const srvProp = sumaProd > 0 && totalPreparaciones > 0
+            ? Math.round((p.valor / sumaProd) * totalPreparaciones) : 0;
+          return {
+            nombre: p.nombre, cantidad: p.cantidad,
+            valorProd: p.valor, valorServicio: srvProp, descuento: 0,
+            valorNeto: p.valor + srvProp,
+          };
+        });
+      }
+
+      if (productosAMostrar.length > 0) {
         const medallas2 = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-        const fp2 = monitor.formatPesos;
-        const sumaProd = productos.reduce((s, p) => s + (p.valor || 0), 0);
         msg += `\n📦 *Productos vendidos:*\n`;
         let sumaTotal = 0;
-        productos.forEach((p, i) => {
+        productosAMostrar.forEach((p, i) => {
           const cat = monitor.inferirCategoria(p.nombre);
           const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-          // Distribuir preparación proporcionalmente al valor del producto
-          const prepProp = sumaProd > 0 && totalPreparaciones > 0
-            ? Math.round((p.valor / sumaProd) * totalPreparaciones)
-            : 0;
-          const valorTotal = (p.valor || 0) + prepProp;
-          sumaTotal += valorTotal;
-          const detalle = prepProp > 0
-            ? ` ($${fp2(p.valor)} + $${fp2(prepProp)} prep) = *$${fp2(valorTotal)}*`
-            : ` — $${fp2(p.valor)}`;
+          sumaTotal += p.valorNeto;
+
+          let detalle;
+          if (p.valorServicio > 0 && p.descuento > 0) {
+            detalle = ` ($${fp2(p.valorProd)} + $${fp2(p.valorServicio)} srv - $${fp2(p.descuento)} desc) = *$${fp2(p.valorNeto)}*`;
+          } else if (p.valorServicio > 0) {
+            detalle = ` ($${fp2(p.valorProd)} + $${fp2(p.valorServicio)} srv) = *$${fp2(p.valorNeto)}*`;
+          } else if (p.descuento > 0) {
+            detalle = ` ($${fp2(p.valorProd)} - $${fp2(p.descuento)} desc) = *$${fp2(p.valorNeto)}*`;
+          } else {
+            detalle = ` — $${fp2(p.valorProd)}`;
+          }
           msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}${detalle}\n`;
         });
         msg += `_Total: $${fp2(sumaTotal)}_\n`;
@@ -1353,8 +1431,8 @@ async function reporteProductos(desde, hasta, titulo) {
     const fp = monitor.formatPesos;
     const icons = ['🥇','🥈','🥉','4️⃣','5️⃣'];
 
-    // 1. Excluir PREPARACIÓN (mano de obra, no producto real)
-    const productos = raw.filter(p => !p.nombre.toLowerCase().includes('preparac'));
+    // 1. Excluir PREPARACIÓN/RECARGA (mano de obra, no producto real)
+    const productos = raw.filter(p => !/(preparac|recarga)/i.test(p.nombre));
 
     // 2. Resolver categoría: catálogo VectorPOS primero, luego inferir
     const resolverCategoria = (nombre) => {
@@ -1610,22 +1688,31 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
     const metaDiaria = Math.round(meta / diasEnMes);
     const filtro = filtroCajero.toLowerCase().trim();
 
-    const { browser, page } = await monitor.crearSesionPOS();
-    const cierres = await monitor.extraerCierresCaja(page, desde, hasta);
-    // Ventas del período completo (una sola llamada)
-    const cajerosRango = await monitor.extraerVentasCajero(page, desde, hasta);
-    // Ventas de hoy por separado para meta diaria
-    const cajerosHoy = desde === hasta && desde === hoy
-      ? cajerosRango
-      : await monitor.extraerVentasCajero(page, hoy, hoy);
-    // Productos vendidos del período
-    const productosRaw = await monitor.extraerVentasProducto(page, desde, hasta);
-    // Hora de la primera venta
-    const ventasHora = await monitor.extraerVentasPorHora(page, desde, hasta);
-    await browser.close();
+    const esDiaUnico = desde === hasta;
 
+    const [posData, facturas] = await Promise.all([
+      (async () => {
+        const { browser, page } = await monitor.crearSesionPOS();
+        const cierres = await monitor.extraerCierresCaja(page, desde, hasta);
+        const cajerosRango = await monitor.extraerVentasCajero(page, desde, hasta);
+        const cajerosHoy = desde === hasta && desde === hoy
+          ? cajerosRango
+          : await monitor.extraerVentasCajero(page, hoy, hoy);
+        const productosRaw = await monitor.extraerVentasProducto(page, desde, hasta);
+        const ventasHora   = await monitor.extraerVentasPorHora(page, desde, hasta);
+        await browser.close();
+        return { cierres, cajerosRango, cajerosHoy, productosRaw, ventasHora };
+      })(),
+      monitor.extraerHistoricoFacturas(desde, hasta, esDiaUnico)
+        .catch(e => { console.error('⚠️ Histórico facturas caja:', e.message); return []; }),
+    ]);
+
+    const { cierres, cajerosRango, cajerosHoy, productosRaw, ventasHora } = posData;
+    const totalDescFacturas = facturas.reduce((s, f) => s + (f.descuento || 0), 0);
+
+    const esServicioCaja = (n) => /(preparac|recarga)/i.test(n);
     const productos = productosRaw
-      .filter(p => !p.nombre.toLowerCase().includes('preparac'))
+      .filter(p => !esServicioCaja(p.nombre))
       .sort((a, b) => b.cantidad - a.cantidad)
       .slice(0, 10);
 
@@ -1741,23 +1828,59 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
     } // fin else rango múltiple
 
     // ── Primera venta y productos — solo si hay ventas reales ──
-    const totalCaja = cajerosF.reduce((s, c) => s + c.total, 0);
+    const totalCaja = cajerosF.reduce((s, c) => s + c.total, 0) ||
+                      productosRaw.reduce((s, p) => s + (p.valor || 0), 0);
     if (totalCaja > 0) {
       if (primeraHora) {
         const h = primeraHora.hora;
         const ampm = h >= 12 ? 'PM' : 'AM';
-        const h12  = h % 12 || 12;
-        msg += `\n🕐 *Primera venta:* ${h12}:00 ${ampm}\n`;
+        msg += `\n🕐 *Primera venta:* ${h % 12 || 12}:00 ${ampm}\n`;
+      }
+      if (totalDescFacturas > 0) {
+        msg += `🏷️ Descuentos del período: $${fp(totalDescFacturas)}\n`;
       }
 
-      if (productos.length > 0) {
+      // Usar facturas con detalle si están disponibles
+      const facturasConItems = facturas.filter(f => f.items?.length > 0);
+      if (facturasConItems.length > 0) {
+        const prods = procesarFacturasParaProductos(facturasConItems).slice(0, 10);
+        if (prods.length > 0) {
+          msg += `\n📦 *Productos vendidos:*\n`;
+          const medallas = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+          prods.forEach((p, i) => {
+            const cat = monitor.inferirCategoria(p.nombre);
+            const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
+            let detalle;
+            if (p.valorServicio > 0 && p.descuento > 0) {
+              detalle = ` ($${fp(p.valorProd)} + $${fp(p.valorServicio)} srv - $${fp(p.descuento)} desc) = *$${fp(p.valorNeto)}*`;
+            } else if (p.valorServicio > 0) {
+              detalle = ` ($${fp(p.valorProd)} + $${fp(p.valorServicio)} srv) = *$${fp(p.valorNeto)}*`;
+            } else if (p.descuento > 0) {
+              detalle = ` ($${fp(p.valorProd)} - $${fp(p.descuento)} desc) = *$${fp(p.valorNeto)}*`;
+            } else {
+              detalle = ` — $${fp(p.valorProd)}`;
+            }
+            msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}${detalle}\n`;
+          });
+        }
+      } else if (productos.length > 0) {
+        // Fallback: mostrar productos con distribución proporcional de servicios
+        const esServicioCaja2 = (n) => /(preparac|recarga)/i.test(n);
+        const preparacionesTotal = productosRaw.filter(p => esServicioCaja2(p.nombre))
+                                               .reduce((s, p) => s + (p.valor || 0), 0);
+        const sumaProd = productos.reduce((s, p) => s + (p.valor || 0), 0);
         msg += `\n📦 *Productos vendidos:*\n`;
         const medallas = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
         productos.forEach((p, i) => {
           const cat = monitor.inferirCategoria(p.nombre);
           const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-          const val = p.valor > 0 ? ` — $${monitor.formatPesos(p.valor)}` : '';
-          msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}${val}\n`;
+          const srvProp = sumaProd > 0 && preparacionesTotal > 0
+            ? Math.round((p.valor / sumaProd) * preparacionesTotal) : 0;
+          const valorTotal = (p.valor || 0) + srvProp;
+          const detalle = srvProp > 0
+            ? ` ($${fp(p.valor)} + $${fp(srvProp)} srv) = *$${fp(valorTotal)}*`
+            : ` — $${fp(p.valor)}`;
+          msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}${detalle}\n`;
         });
       }
     }

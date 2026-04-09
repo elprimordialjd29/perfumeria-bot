@@ -169,7 +169,7 @@ async function enviarReporteMatutino() {
 
     // Top productos de ayer (sin preparaciones)
     const prodFiltrados = (productosAyer || []).filter(p =>
-      !( p.producto || p.nombre || '').toLowerCase().includes('preparac')
+      !( p.producto || p.nombre || '').toLowerCase().match(/(preparac|recarga)/i)
     );
     if (prodFiltrados.length > 0) {
       msg1 += `\n📦 *Productos vendidos ayer:*\n`;
@@ -489,7 +489,7 @@ async function detectarNuevaVenta() {
     await browser.close();
 
     const totalCajeros = cajeros.reduce((s, c) => s + c.total, 0);
-    const totalProds   = productos.filter(p => !(p.nombre||'').toLowerCase().includes('preparac'))
+    const totalProds   = productos.filter(p => !(p.nombre||'').toLowerCase().match(/(preparac|recarga)/i))
                                    .reduce((s, p) => s + (p.valor || 0), 0);
     const totalActual  = totalCajeros > 0 ? totalCajeros : totalProds;
 
@@ -515,7 +515,7 @@ async function detectarNuevaVenta() {
 
     // Últimos productos vendidos
     const ultimos = productos
-      .filter(p => !(p.nombre||'').toLowerCase().includes('preparac'))
+      .filter(p => !(p.nombre||'').toLowerCase().match(/(preparac|recarga)/i))
       .slice(0, 3);
 
     let msg = `🛍️ *NUEVA VENTA — ${hoy}*\n\n`;
@@ -563,7 +563,7 @@ async function enviarReporteMediodia() {
     const activos      = cajeros.filter(c => c.tickets > 0);
     const totalCajeros = activos.reduce((s, c) => s + c.total, 0);
     // Fallback: si cajeros no tiene datos aún, usar suma de productos
-    const totalProds   = productos.filter(p => !( p.producto || p.nombre || '').toLowerCase().includes('preparac'))
+    const totalProds   = productos.filter(p => !( p.producto || p.nombre || '').toLowerCase().match(/(preparac|recarga)/i))
                                    .reduce((s, p) => s + (p.valor || 0), 0);
     const totalHoy    = totalCajeros > 0 ? totalCajeros : totalProds;
     const ticketsHoy  = activos.reduce((s, c) => s + c.tickets, 0);
@@ -611,7 +611,7 @@ async function enviarReporteMediodia() {
     }
 
     // Top 3 productos de la mañana (con valor)
-    const prodFiltrados = productos.filter(p => !( p.producto || p.nombre || '').toLowerCase().includes('preparac'));
+    const prodFiltrados = productos.filter(p => !( p.producto || p.nombre || '').toLowerCase().match(/(preparac|recarga)/i));
     if (prodFiltrados.length > 0) {
       msg += `\n📦 *Top productos esta mañana:*\n`;
       const medallas = ['🥇','🥈','🥉'];

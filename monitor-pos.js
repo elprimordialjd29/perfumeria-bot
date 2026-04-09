@@ -1001,6 +1001,244 @@ async function extraerVentasPorHora(page, fechaInicial, fechaFinal) {
     .sort((a, b) => a.hora - b.hora);
 }
 
+// ──────────────────────────────────────────────
+// HISTÓRICO DE FACTURAS (app.vectorpos.com.co)
+// Permite cruzar productos con sus recargas/preparaciones exactas y descuentos
+// ──────────────────────────────────────────────
+
+/**
+ * Extrae el histórico de facturas para un rango de fechas.
+ * @param {string} fechaInicial - 'YYYY-MM-DD'
+ * @param {string} fechaFinal   - 'YYYY-MM-DD'
+ * @param {boolean} incluirDetalle - true = hace clic en cada factura para obtener sus items
+ * @returns {Promise<Array>} [{factura, fecha, hora, venta, total, descuento, items?, medioPago?}]
+ */
+async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle = false) {
+  const user = process.env.VECTORPOS_USER;
+  const pass = process.env.VECTORPOS_PASS;
+  let browser = null;
+
+  try {
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+    });
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+
+    // Intercept API responses – capturar cualquier endpoint de facturas
+    page.on('response', async res => {
+      const url = res.url();
+      const ct  = res.headers()['content-type'] || '';
+      if (!ct.includes('json')) return;
+      try {
+        const text = await res.text();
+        if (!text || (!text.startsWith('[') && !text.startsWith('{'))) return;
+        const data = JSON.parse(text);
+        if (url.toLowerCase().includes('factura') || url.toLowerCase().includes('historico')) {
+          const arr = data?.datos || (Array.isArray(data) ? data : null);
+          if (arr?.length > 0) console.log(`📡 Facturas API: ${url.replace(APP_BASE,'')} → ${arr.length}`);
+        }
+      } catch(e) {}
+    });
+
+    // Login
+    await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'networkidle0', timeout: 30000 });
+    await page.type('#txtEmail', user, { delay: 30 });
+    await page.type('#txtClave', pass, { delay: 30 });
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+      page.click('#btnEntrar'),
+    ]);
+    if (page.url().includes('cambioSucursal')) {
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+        page.click('a,button'),
+      ]);
+    }
+    await new Promise(r => setTimeout(r, 2000));
+
+    // Intentar navegar al Histórico de Facturas
+    // Primero: probar URLs directas con ?r= (patrón que usa VectorPOS)
+    const candidatos = [
+      `${APP_BASE}/?r=caja/historicoFactura`,
+      `${APP_BASE}/?r=venta/historicoFacturas`,
+      `${APP_BASE}/?r=factura/historico`,
+      `${APP_BASE}/?r=ventas/historicoFacturas`,
+    ];
+
+    let histOk = false;
+    for (const url of candidatos) {
+      try {
+        await page.goto(url, { waitUntil: 'networkidle0', timeout: 10000 });
+        const titulo = await page.evaluate(() =>
+          document.querySelector('h1,h2,.page-title')?.innerText?.trim() || ''
+        );
+        if (/hist[oó]rico/i.test(titulo)) { histOk = true; break; }
+      } catch(e) {}
+    }
+
+    if (!histOk) {
+      // Fallback: navegar por clicks en la UI
+      await page.goto(`${APP_BASE}/#`, { waitUntil: 'networkidle0', timeout: 15000 });
+      await new Promise(r => setTimeout(r, 2000));
+      for (const menuName of ['Caja', 'Vender', 'Estadísticas', 'Estadisticas']) {
+        const clicked = await page.evaluate((n) => {
+          const el = [...document.querySelectorAll('a,div,span')].find(e => e.innerText?.trim() === n);
+          if (el) { el.click(); return true; }
+          return false;
+        }, menuName);
+        if (!clicked) continue;
+        await new Promise(r => setTimeout(r, 1200));
+        histOk = await page.evaluate(() => {
+          const el = [...document.querySelectorAll('a,span,li,div')]
+            .find(e => /hist[oó]rico.*factura|historico.*factura/i.test(e.innerText?.trim() || ''));
+          if (el) { el.click(); return true; }
+          return false;
+        });
+        if (histOk) break;
+      }
+    }
+
+    if (!histOk) {
+      console.log('⚠️ No se pudo navegar a Histórico de Facturas');
+      await browser.close();
+      return [];
+    }
+    await new Promise(r => setTimeout(r, 1500));
+
+    // Establecer rango de fechas
+    await page.evaluate((fi, ff) => {
+      const inputs = [...document.querySelectorAll('input[type="date"]')];
+      const set = (inp, val) => {
+        if (!inp) return;
+        inp.value = val;
+        inp.dispatchEvent(new Event('input',  { bubbles: true }));
+        inp.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      set(inputs[0], fi);
+      set(inputs[1], ff);
+    }, fechaInicial, fechaFinal);
+
+    // Click "Cargar"
+    await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('button,input[type="button"],a')]
+        .find(el => /^cargar$/i.test(el.innerText?.trim() || el.value?.trim() || ''));
+      if (btn) btn.click();
+    });
+    await new Promise(r => setTimeout(r, 4000));
+
+    // Leer tabla
+    const parseNum = (s) => parseInt(String(s||'0').replace(/\./g,'').replace(/[^0-9]/g,'')) || 0;
+
+    const filas = await page.evaluate(() => {
+      const rows = [];
+      document.querySelectorAll('table tbody tr, table tr').forEach(tr => {
+        const cells = [...tr.querySelectorAll('td')]
+          .map(td => td.innerText.trim().replace(/\s+/g,' '));
+        // Columnas: Estado(0) Factura(1) Mesa(2) Venta(3) Propina(4) Domicilio(5) Total(6) Fecha(7)...
+        if (cells.length >= 7 && /^\d+$/.test(cells[1])) rows.push(cells);
+      });
+      return rows;
+    });
+
+    const facturasList = filas.map(cells => {
+      const venta = parseNum(cells[3]);
+      const total = parseNum(cells[6]);
+      const fechaHora = cells[7] || '';
+      return {
+        factura:   cells[1],
+        mesa:      cells[2] || '',
+        venta,
+        total,
+        descuento: Math.max(0, venta - total),
+        fecha:     fechaHora.split(' ')[0] || fechaInicial,
+        hora:      fechaHora.split(' ')[1] || '',
+      };
+    });
+
+    console.log(`📄 Histórico: ${facturasList.length} facturas (${fechaInicial}→${fechaFinal})`);
+
+    // Detalle por factura (solo si se solicita y hay ≤ 30 facturas)
+    if (incluirDetalle && facturasList.length > 0 && facturasList.length <= 30) {
+      for (const factRow of facturasList) {
+        const numFact = factRow.factura;
+        try {
+          // Click en el link de la factura
+          await page.evaluate((num) => {
+            const link = [...document.querySelectorAll('table td a')]
+              .find(a => a.innerText.trim() === num);
+            if (link) link.click();
+          }, numFact);
+          await new Promise(r => setTimeout(r, 1500));
+
+          // Scrapear el modal
+          const detalle = await page.evaluate(() => {
+            const container =
+              document.querySelector('.modal.show') ||
+              document.querySelector('.modal[style*="block"]') ||
+              document.querySelector('[role="dialog"]') ||
+              document.body;
+
+            const text = container.innerText || '';
+            const items = [];
+
+            container.querySelectorAll('table tr, table tbody tr').forEach(tr => {
+              const cells = [...tr.querySelectorAll('td')]
+                .map(td => td.innerText.trim().replace(/\s+/g,' '));
+              // Fila de item: Cnt(número) | Nombre(texto) | Valor(moneda)
+              if (cells.length >= 3 && /^\d+$/.test(cells[0]) && cells[1].length > 1) {
+                items.push({
+                  cantidad: parseInt(cells[0]) || 1,
+                  nombre: cells[1],
+                  valor: parseInt(cells[2].replace(/\./g,'').replace(/[^0-9]/g,'')) || 0,
+                });
+              }
+            });
+
+            const exNum = (pattern) => {
+              const m = text.match(pattern);
+              return m ? parseInt(m[1].replace(/\./g,'').replace(/[^0-9]/g,'')) || 0 : 0;
+            };
+            const ef   = exNum(/ventas\s+efectivo[^\d]*([\d.]+)/i);
+            const bc   = exNum(/bancolombia[^\d]*([\d.]+)/i);
+            const nq   = exNum(/nequi[^\d]*([\d.]+)/i);
+
+            return items.length > 0 ? {
+              items,
+              efectivo: ef, bancolombia: bc, nequi: nq,
+              medioPago: ef > 0 ? 'Efectivo' : bc > 0 ? 'Bancolombia' : nq > 0 ? 'Nequi' : 'Otro',
+            } : null;
+          });
+
+          if (detalle) Object.assign(factRow, detalle);
+
+          // Cerrar modal
+          await page.evaluate(() => {
+            const close = document.querySelector('.modal .close,[data-dismiss="modal"],.btn-close,.modal-header .close');
+            if (close) { close.click(); return; }
+            const cerrar = [...document.querySelectorAll('button')]
+              .find(b => /^cerrar$|^close$/i.test(b.innerText.trim()));
+            if (cerrar) cerrar.click();
+          });
+          await new Promise(r => setTimeout(r, 700));
+        } catch(e) {
+          console.error(`⚠️ Detalle factura ${numFact}:`, e.message);
+        }
+      }
+    }
+
+    await browser.close();
+    browser = null;
+    return facturasList;
+
+  } catch(e) {
+    console.error('❌ Error extraerHistoricoFacturas:', e.message);
+    if (browser) await browser.close();
+    return [];
+  }
+}
+
 module.exports = {
   monitorearVentasDiarias,
   generarMensajeMeta,
@@ -1025,4 +1263,5 @@ module.exports = {
   getNivelAlerta,
   getUmbral: _getUmbral,
   obtenerCategoriaProductos,
+  extraerHistoricoFacturas,
 };
