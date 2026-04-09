@@ -192,27 +192,44 @@ function activarEsperaEleccion() {
 
 // Mapa de números/letras de menú a acciones directas
 const MENU_ACCIONES = {
+  // ── VENTAS ──
   '1':  '[REPORTE_HOY]',
   '2':  '[REPORTE_MES]',
   '3':  '[REPORTE_MES_ANT]',
   '4':  '[REPORTE_SEMANA]',
-  '5':  '[PRODUCTOS_MES]',
-  '6':  '[MEDIOS_PAGO_HOY]',
+  '5':  '[REPORTE_RANGO]',
+  '6':  '[REPORTE_GENERAL]',
+  // ── CAJEROS ──
   '7':  '[QUIEN_TRABAJO]',
   '8':  '[RANKING_MES]',
-  '9':  '[INVENTARIO]',
-  '10': '[REPORTE_RANGO]',
-  '11': '[REPORTE_GENERAL]',
-  '12': '[VENTAS_INVENTARIO]',
-  '13': '[RESTOCK]',
-  '14': '[GASTOS]',
-  '15': '[VENTAS_HORA]',
+  '9':  '[VENTAS_HORA]',
+  '10': '[MEDIOS_PAGO_HOY]',
+  // ── CAJA ──
+  '11': '[CAJA_HOY]',
+  '12': '[CAJA_SEM]',
+  '13': '[CAJA_MES]',
+  // ── PRODUCTOS ──
+  '14': '[PRODUCTOS_MES]',
+  '15': '[VENTAS_INVENTARIO]',
+  // ── INVENTARIO ──
+  '16': '[INVENTARIO]',
+  '17': '[INVENTARIO_CAT:ESENCIAS]',
+  '18': '[INVENTARIO_CAT:ENVASE]',
+  '19': '[INVENTARIO_CAT:ORIGINALES]',
+  '20': '[INVENTARIO_CAT:REPLICA 1.1]',
+  '21': '[RESTOCK]',
+  // ── GASTOS ──
+  '22': '[GASTOS]',
+  // ── REDES SOCIALES ──
+  '23': '[CONTENIDO_HOY]',
+  '24': '[CONTENIDO_SEMANA]',
+  // ── ADMIN ──
   'r':  '[REQUERIMIENTO]',
   'R':  '[REQUERIMIENTO]',
-  'e':  '[EXPORTAR_EXCEL]',
-  'E':  '[EXPORTAR_EXCEL]',
   'v':  '[VER_REQS]',
   'V':  '[VER_REQS]',
+  'e':  '[EXPORTAR_EXCEL]',
+  'E':  '[EXPORTAR_EXCEL]',
 };
 
 /** Retorna objeto con fechas de referencia relativas */
@@ -309,6 +326,32 @@ async function procesarMensaje(texto, esAdmin = true) {
   // Atajo directo por número de menú
   if (MENU_ACCIONES[t]) {
     const accion = MENU_ACCIONES[t];
+    historial.push({ role: 'user', content: texto });
+    historial.push({ role: 'assistant', content: accion });
+    return await ejecutarAccion(accion);
+  }
+
+  // ── Palabras rápidas ──
+  const palabrasRapidas = {
+    'hoy':        '[REPORTE_HOY]',
+    'mes':        '[REPORTE_MES]',
+    'semana':     '[REPORTE_SEMANA]',
+    'inventario': '[INVENTARIO]',
+    'restock':    '[RESTOCK]',
+    'gastos':     '[GASTOS]',
+    'cajeros':    '[RANKING_MES]',
+    'caja':       '[CAJA_HOY]',
+    'menu':       '[MENU]',
+    'menú':       '[MENU]',
+    'esencias':   '[INVENTARIO_CAT:ESENCIAS]',
+    'envases':    '[INVENTARIO_CAT:ENVASE]',
+    'originales': '[INVENTARIO_CAT:ORIGINALES]',
+    'replicas':   '[INVENTARIO_CAT:REPLICA 1.1]',
+    'réplicas':   '[INVENTARIO_CAT:REPLICA 1.1]',
+    'redes':      '[CONTENIDO_HOY]',
+  };
+  if (palabrasRapidas[tLow]) {
+    const accion = palabrasRapidas[tLow];
     historial.push({ role: 'user', content: texto });
     historial.push({ role: 'assistant', content: accion });
     return await ejecutarAccion(accion);
@@ -2120,35 +2163,59 @@ function mensajeBienvenida() {
 }
 
 function mensajeMenu() {
-  return `📋 *MENÚ DE OPCIONES*\n\n` +
-    `1️⃣  Ventas de hoy\n` +
-    `2️⃣  Ventas de este mes\n` +
-    `3️⃣  Ventas del mes pasado\n` +
-    `4️⃣  Ventas de esta semana\n` +
-    `5️⃣  Productos más/menos vendidos del mes\n` +
-    `6️⃣  Medios de pago hoy\n` +
-    `7️⃣  Quién trabajó hoy\n` +
-    `8️⃣  Ranking cajeros del mes (desglose por día)\n` +
-    `9️⃣  Alertas de inventario\n` +
-    `🔟  Ventas por rango de fechas\n` +
-    `1️⃣1️⃣ Reporte general (ayer + mes + inventario bajo)\n` +
-    `1️⃣2️⃣ Ventas vs inventario completo\n` +
-    `1️⃣3️⃣ Costo de restock (qué falta + cuánto costaría)\n` +
-    `1️⃣4️⃣ Gastos del mes\n` +
-    `1️⃣5️⃣ Ventas por hora (hora pico)\n` +
-    `🇷 *R* — Crear requerimiento nuevo\n` +
-    `🇻 *V* — Ver requerimientos\n` +
-    `📊 *E* — Exportar reporte en Excel\n\n` +
-    `💬 *También puedes preguntar:*\n` +
-    `• _"dame el estado de singler color"_ → vendido + stock\n` +
-    `• _"dame el estado de tapa plana 50ml"_ → vendido + stock\n` +
-    `• _"singler color ayer / esta semana / el mes pasado"_\n` +
-    `• _"cuánto vendió Michelle hoy / esta semana / este mes"_\n` +
-    `• _"cuánto vendió Moisés el mes pasado"_\n` +
-    `• _"ventas de Laura del 1 al 7 de abril"_\n` +
-    `• _"gastos del mes"_ · _"ventas por hora"_\n` +
-    `• _"ayer"_ · _"ayer y hoy"_ · _"antier a hoy"_\n` +
-    `• Cualquier pregunta sobre perfumes árabes 😊`;
+  return `📋 *MENÚ — SALMA PERFUM*\n\n` +
+
+    `💰 *VENTAS*\n` +
+    `1 · Ventas de hoy\n` +
+    `2 · Ventas de este mes\n` +
+    `3 · Ventas del mes pasado\n` +
+    `4 · Ventas de esta semana\n` +
+    `5 · Ventas por rango de fechas\n` +
+    `6 · Reporte general completo\n\n` +
+
+    `👥 *CAJEROS*\n` +
+    `7 · Quién trabajó hoy\n` +
+    `8 · Ranking cajeros del mes\n` +
+    `9 · Ventas por hora (hora pico)\n` +
+    `10 · Medios de pago de hoy\n\n` +
+
+    `🏧 *MOVIMIENTO DE CAJA*\n` +
+    `11 · Caja de hoy\n` +
+    `12 · Caja de esta semana\n` +
+    `13 · Caja de este mes\n\n` +
+
+    `📦 *PRODUCTOS*\n` +
+    `14 · Más/menos vendidos del mes\n` +
+    `15 · Ventas vs inventario completo\n\n` +
+
+    `🧪 *INVENTARIO*\n` +
+    `16 · Todo el inventario\n` +
+    `17 · Inventario esencias\n` +
+    `18 · Inventario envases\n` +
+    `19 · Inventario originales\n` +
+    `20 · Inventario réplicas 1.1\n` +
+    `21 · Restock (qué falta + costo)\n\n` +
+
+    `💸 *GASTOS*\n` +
+    `22 · Gastos del mes\n\n` +
+
+    `📱 *REDES SOCIALES*\n` +
+    `23 · Contenido de hoy (checklist)\n` +
+    `24 · Plan de redes esta semana\n\n` +
+
+    `⚙️ *ADMIN*\n` +
+    `R · Crear requerimiento\n` +
+    `V · Ver requerimientos\n` +
+    `E · Exportar Excel\n\n` +
+
+    `💬 *Palabras rápidas:*\n` +
+    `_hoy · ayer · semana · mes · gastos · inventario · caja · cajeros · restock · redes_\n\n` +
+
+    `💬 *Preguntas libres:*\n` +
+    `• _"cuánto vendió Michelle esta semana"_\n` +
+    `• _"estado de singler color / tapa plana 50ml"_\n` +
+    `• _"ventas del 1 al 15 de marzo"_\n` +
+    `• _"mañana"_ · _"pasado mañana"_ → contenido de redes`;
 }
 
 module.exports = { procesarMensaje, activarEsperaEleccion, mensajeBienvenida, exportarExcelMes };
