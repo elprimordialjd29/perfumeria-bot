@@ -908,34 +908,70 @@ async function reporteRankingPOS(desde, hasta, titulo) {
 async function reporteProductos(desde, hasta, titulo) {
   try {
     const { browser, page } = await monitor.crearSesionPOS();
-    const productos = await monitor.extraerVentasProducto(page, desde, hasta);
+    const raw = await monitor.extraerVentasProducto(page, desde, hasta);
     await browser.close();
 
-    if (!productos.length) return `📦 Sin ventas de productos para ${titulo}.`;
+    if (!raw.length) return `📦 Sin ventas de productos para ${titulo}.`;
 
-    const top5 = productos.slice(0, 5);
-    const bottom5 = productos.slice(-5).reverse();
-    const totalValor = productos.reduce((s, p) => s + p.valor, 0);
+    const fp = monitor.formatPesos;
+    const icons = ['🥇','🥈','🥉','4️⃣','5️⃣'];
+
+    // 1. Excluir PREPARACIÓN (mano de obra, no producto real)
+    const productos = raw.filter(p => !p.nombre.toLowerCase().includes('preparac'));
+
+    // 2. Clasificar por categoría usando la misma lógica del inventario
+    const grupos = { ESENCIAS: [], ENVASE: [], ORIGINALES: [], 'REPLICA 1.1': [], OTROS: [] };
+    for (const p of productos) {
+      const cat = monitor.inferirCategoria(p.nombre);
+      if (cat.startsWith('ESENCIAS'))       grupos.ESENCIAS.push(p);
+      else if (cat === 'ENVASE')            grupos.ENVASE.push(p);
+      else if (cat === 'ORIGINALES')        grupos.ORIGINALES.push(p);
+      else if (cat === 'REPLICA 1.1')       grupos['REPLICA 1.1'].push(p);
+      else                                  grupos.OTROS.push(p);
+    }
+
+    const totalValor    = productos.reduce((s, p) => s + p.valor, 0);
     const totalCantidad = productos.reduce((s, p) => s + p.cantidad, 0);
 
+    const partes = [];
     let msg = `📦 *PRODUCTOS — ${titulo}*\n`;
-    msg += `_${productos.length} productos vendidos_\n\n`;
+    msg += `_${productos.length} productos | $${fp(totalValor)} | ${totalCantidad} uds_\n\n`;
 
-    msg += `🏆 *MÁS VENDIDOS (por valor):*\n`;
-    top5.forEach((p, i) => {
-      const icons = ['🥇','🥈','🥉','4️⃣','5️⃣'];
-      msg += `${icons[i]} *${p.nombre}*\n`;
-      msg += `   💰 $${p.valor.toLocaleString('es-CO')} | 🛍 ${p.cantidad} uds (${p.pctValor})\n`;
+    // Helper: bloque por categoría
+    const bloqueCategoria = (emoji, nombre, lista) => {
+      if (!lista.length) return;
+      const top = lista.slice(0, 5);
+      const totalCat = lista.reduce((s, p) => s + p.valor, 0);
+      msg += `${emoji} *${nombre}* — $${fp(totalCat)}\n`;
+      top.forEach((p, i) => {
+        const precioUnd = p.cantidad > 0 ? Math.round(p.valor / p.cantidad) : 0;
+        msg += `${icons[i]} *${p.nombre}*\n`;
+        msg += `   💰 $${fp(p.valor)} | ${p.cantidad} uds | ~$${fp(precioUnd)}/u\n`;
+      });
+      if (lista.length > 5) msg += `   _+${lista.length - 5} más_\n`;
+      msg += `\n`;
+      if (msg.length > 3500) { partes.push(msg); msg = `📦 _(continuación)_\n\n`; }
+    };
+
+    bloqueCategoria('🧪', 'ESENCIAS',    grupos.ESENCIAS);
+    bloqueCategoria('🧴', 'ENVASES',     grupos.ENVASE);
+    bloqueCategoria('✨', 'ORIGINALES',  grupos.ORIGINALES);
+    bloqueCategoria('🔁', 'RÉPLICAS 1.1', grupos['REPLICA 1.1']);
+    if (grupos.OTROS.length) bloqueCategoria('📦', 'OTROS', grupos.OTROS);
+
+    // Menos vendidos (global, sin preparación)
+    const bottom5 = [...productos].sort((a, b) => a.valor - b.valor).slice(0, 5);
+    msg += `📉 *MENOS VENDIDOS:*\n`;
+    bottom5.forEach(p => {
+      const precioUnd = p.cantidad > 0 ? Math.round(p.valor / p.cantidad) : 0;
+      msg += `• *${p.nombre}*: ${p.cantidad} uds — $${fp(p.valor)} (~$${fp(precioUnd)}/u)\n`;
     });
 
-    msg += `\n📉 *MENOS VENDIDOS:*\n`;
-    bottom5.forEach((p, i) => {
-      msg += `• ${p.nombre}: ${p.cantidad} uds — $${p.valor.toLocaleString('es-CO')}\n`;
-    });
-
-    msg += `\n💵 Total: $${totalValor.toLocaleString('es-CO')} | ${totalCantidad} unidades`;
     msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
-    return msg;
+    partes.push(msg);
+
+    if (partes.length === 1) return partes[0];
+    return { tipo: 'mensajes', partes };
   } catch(e) {
     console.error('Error productos:', e.message);
     return '❌ No pude consultar los productos.';

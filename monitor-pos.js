@@ -902,4 +902,5 @@ module.exports = {
   fechaInicioMes,
   formatPesos,
   UMBRALES,
+  inferirCategoria: _inferirCategoria,
 };
