@@ -80,7 +80,12 @@ Tu respuesta debe COMENZAR con la etiqueta, nada antes.
 [CAJERO_MES_ANT:nombre]         → cuánto vendió [nombre] el mes pasado. Ej: "cuánto vendió Moisés el mes pasado" → [CAJERO_MES_ANT:moises]
 [CAJERO_RANGO:nombre:YYYY-MM-DD:YYYY-MM-DD] → cuánto vendió [nombre] en un rango. Ej: "ventas de Michelle del 1 al 7 de abril" → [CAJERO_RANGO:michelle:2026-04-01:2026-04-07]
 [GASTOS]            → gastos, egresos, nómina
-[CAJA]              → cierres de caja, turnos
+[CAJA_HOY]          → movimiento de caja hoy
+[CAJA_SEM]          → movimiento de caja esta semana
+[CAJA_MES]          → movimiento de caja este mes, cierres del mes
+[CAJA_RANGO:YYYY-MM-DD:YYYY-MM-DD] → movimiento de caja en un rango de fechas
+[CAJA_PERSONA:nombre:YYYY-MM-DD:YYYY-MM-DD] → movimiento de caja de una persona. Las fechas son opcionales (default: este mes). Ej: "caja de Moises esta semana" → [CAJA_PERSONA:moises:LUNES:HOY] | "caja de Michelle este mes" → [CAJA_PERSONA:michelle]
+[CAJA]              → igual que [CAJA_MES]
 [VENTAS_HORA]       → ventas por hora, hora pico
 [REQUERIMIENTO]     → crear requerimiento, nota, tarea
 [VER_REQS]          → ver requerimientos pendientes
@@ -423,8 +428,33 @@ async function ejecutarAccion(rawOriginal) {
       return await reporteGastos(monitor.fechaInicioMes(), monitor.fechaHoy(), 'ESTE MES');
     }
 
-    if (raw.startsWith('[CAJA]')) {
+    if (raw.startsWith('[CAJA_PERSONA:')) {
+      const match = raw.match(/\[CAJA_PERSONA:([^:\]]+)(?::([^:\]]+))?(?::([^\]]+))?\]/);
+      const nombre = match?.[1]?.trim() || '';
+      const desde  = match?.[2]?.trim() || monitor.fechaInicioMes();
+      const hasta  = match?.[3]?.trim() || monitor.fechaHoy();
+      return await reporteCierresCaja(desde, hasta, nombre);
+    }
+
+    if (raw.startsWith('[CAJA_HOY]')) {
+      return await reporteCierresCaja(monitor.fechaHoy(), monitor.fechaHoy());
+    }
+
+    if (raw.startsWith('[CAJA_SEM]')) {
+      const hoy = new Date();
+      const diasLunes = hoy.getDay() === 0 ? 6 : hoy.getDay() - 1;
+      const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - diasLunes);
+      return await reporteCierresCaja(lunes.toISOString().split('T')[0], monitor.fechaHoy());
+    }
+
+    if (raw.startsWith('[CAJA_MES]') || raw.startsWith('[CAJA]')) {
       return await reporteCierresCaja(monitor.fechaInicioMes(), monitor.fechaHoy());
+    }
+
+    if (raw.startsWith('[CAJA_RANGO:')) {
+      const match = raw.match(/\[CAJA_RANGO:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})\]/);
+      if (match) return await reporteCierresCaja(match[1], match[2]);
+      return '📅 Formato: "caja del 1 al 7 de abril"';
     }
 
     if (raw.startsWith('[VENTAS_HORA]')) {
@@ -1060,65 +1090,113 @@ async function reporteGastos(desde, hasta, titulo) {
 // CIERRES DE CAJA
 // ──────────────────────────────────────────────
 
-async function reporteCierresCaja(desde, hasta) {
+async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
   try {
     const hoy = monitor.fechaHoy();
     const fp = monitor.formatPesos;
     const meta = parseInt(process.env.META_MENSUAL) || 10000000;
     const diasEnMes = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
     const metaDiaria = Math.round(meta / diasEnMes);
+    const filtro = filtroCajero.toLowerCase().trim();
 
-    // Sesión única — secuencial para evitar conflictos en la misma página
     const { browser, page } = await monitor.crearSesionPOS();
     const cierres = await monitor.extraerCierresCaja(page, desde, hasta);
-    const cajerosHoy = await monitor.extraerVentasCajero(page, hoy, hoy);
+    // Ventas del período completo (una sola llamada)
+    const cajerosRango = await monitor.extraerVentasCajero(page, desde, hasta);
+    // Ventas de hoy por separado para meta diaria
+    const cajerosHoy = desde === hasta && desde === hoy
+      ? cajerosRango
+      : await monitor.extraerVentasCajero(page, hoy, hoy);
     await browser.close();
 
-    let msg = `🏧 *MOVIMIENTO DE CAJA*\n\n`;
+    const titulo = filtro
+      ? `🏧 *CAJA — ${filtro.toUpperCase()}*\n_${desde} → ${hasta}_\n\n`
+      : `🏧 *MOVIMIENTO DE CAJA*\n_${desde} → ${hasta}_\n\n`;
 
-    // ── Sesión activa hoy ──
-    const activos = cajerosHoy.filter(c => c.tickets > 0);
-    if (activos.length > 0) {
-      const totalHoy = activos.reduce((s, c) => s + c.total, 0);
-      const efectivoHoy = activos.reduce((s, c) => s + (c.efectivo || 0), 0);
-      const bancoHoy = activos.reduce((s, c) => s + (c.bancolombia || 0), 0);
-      const nequiHoy = activos.reduce((s, c) => s + (c.nequi || 0), 0);
-      const faltaMeta = Math.max(0, metaDiaria - totalHoy);
-      const pct = Math.min(100, Math.round((totalHoy / metaDiaria) * 100));
-      const barra = Math.min(Math.round(pct / 10), 10);
-      const progreso = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
+    const partes = [];
+    let msg = titulo;
 
-      msg += `📅 *HOY — ${hoy}*\n`;
-      activos.forEach(c => {
-        msg += `👤 *${c.cajero}* | 🎫 ${c.tickets} tickets\n`;
-      });
-      msg += `\n💰 *Vendido hoy: $${fp(totalHoy)}*\n`;
-      if (efectivoHoy > 0)  msg += `   💵 Efectivo: $${fp(efectivoHoy)}\n`;
-      if (bancoHoy > 0)     msg += `   🏦 Bancolombia: $${fp(bancoHoy)}\n`;
-      if (nequiHoy > 0)     msg += `   📱 Nequi: $${fp(nequiHoy)}\n`;
+    // ── Sesión activa hoy (solo si el rango incluye hoy) ──
+    if (hasta === hoy) {
+      const activosHoy = cajerosHoy.filter(c =>
+        c.tickets > 0 && (!filtro || c.cajero.toLowerCase().includes(filtro))
+      );
+      if (activosHoy.length > 0) {
+        const totalHoy    = activosHoy.reduce((s, c) => s + c.total, 0);
+        const efectivoHoy = activosHoy.reduce((s, c) => s + (c.efectivo || 0), 0);
+        const bancoHoy    = activosHoy.reduce((s, c) => s + (c.bancolombia || 0), 0);
+        const nequiHoy    = activosHoy.reduce((s, c) => s + (c.nequi || 0), 0);
+        const pct         = Math.min(100, Math.round((totalHoy / metaDiaria) * 100));
+        const progreso    = '🟩'.repeat(Math.round(pct/10)) + '⬜'.repeat(10 - Math.round(pct/10));
+        const falta       = Math.max(0, metaDiaria - totalHoy);
 
-      msg += `\n🎯 *Meta del día: $${fp(metaDiaria)}*\n`;
-      msg += `${progreso} ${pct}%\n`;
-      if (faltaMeta > 0) {
-        msg += `📉 Falta: *$${fp(faltaMeta)}*\n`;
-      } else {
-        msg += `🏆 *¡Meta del día cumplida!*\n`;
+        msg += `📅 *HOY — ${hoy}*\n`;
+        activosHoy.forEach(c => msg += `👤 *${c.cajero}* | 🎫 ${c.tickets} tickets\n`);
+        msg += `\n💰 *Total: $${fp(totalHoy)}*\n`;
+        if (efectivoHoy > 0) msg += `   💵 Efectivo: $${fp(efectivoHoy)}\n`;
+        if (bancoHoy > 0)    msg += `   🏦 Bancolombia: $${fp(bancoHoy)}\n`;
+        if (nequiHoy > 0)    msg += `   📱 Nequi: $${fp(nequiHoy)}\n`;
+        msg += `\n🎯 Meta día: $${fp(metaDiaria)}\n${progreso} ${pct}%\n`;
+        msg += falta > 0 ? `📉 Falta: *$${fp(falta)}*\n` : `🏆 *¡Meta cumplida!*\n`;
+        msg += `\n`;
       }
-      msg += `\n`;
     }
 
-    // ── Cierres recientes (últimos 7 días) ──
-    if (cierres.length > 0) {
-      msg += `─────────────────\n`;
-      msg += `📋 *Turnos recientes:*\n`;
-      cierres.slice(-7).forEach(c => {
+    // ── Días anteriores con valores ──
+    const diasPasados = cierres.filter(c => c.fecha !== hoy);
+    if (diasPasados.length > 0) {
+      msg += `─────────────────\n📋 *Turnos:*\n\n`;
+
+      for (const c of diasPasados) {
+        // Extraer nombre cajero del campo turnos: "Caja 1 / Turno 1 DATE TIME NOMBRE APELLIDO"
+        const partesTurno = (c.turnos || '').split(' ');
+        const nombreCajero = partesTurno.slice(-2).join(' ');
+        if (filtro && !nombreCajero.toLowerCase().includes(filtro)) continue;
+
+        // Buscar ventas de ese cajero ese día en cajerosRango
+        // (cajerosRango es agregado del período, no por día — usamos el cierre como referencia)
         msg += `📅 *${c.fecha}*\n`;
-        if (c.turnos) msg += `   ${c.turnos.substring(0, 100)}\n`;
-      });
+        msg += `👤 ${nombreCajero}\n`;
+        if (c.turnos) msg += `   ⏰ ${c.turnos.match(/\d{2}:\d{2}:\d{2}/)?.[0] || ''}\n`;
+        msg += `\n`;
+
+        if (msg.length > 3500) { partes.push(msg); msg = `🏧 _(continuación)_\n\n`; }
+      }
     }
 
-    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
-    return msg;
+    // ── Totales del período ──
+    const cajerosF = cajerosRango.filter(c =>
+      !filtro || c.cajero.toLowerCase().includes(filtro)
+    );
+    if (cajerosF.length > 0 && desde !== hasta) {
+      const totalP    = cajerosF.reduce((s, c) => s + c.total, 0);
+      const efectivoP = cajerosF.reduce((s, c) => s + (c.efectivo || 0), 0);
+      const bancoP    = cajerosF.reduce((s, c) => s + (c.bancolombia || 0), 0);
+      const nequiP    = cajerosF.reduce((s, c) => s + (c.nequi || 0), 0);
+      const ticketsP  = cajerosF.reduce((s, c) => s + c.tickets, 0);
+
+      msg += `─────────────────\n`;
+      msg += `📊 *TOTAL DEL PERÍODO*\n`;
+      msg += `💰 *$${fp(totalP)}* | 🎫 ${ticketsP} tickets\n`;
+      if (efectivoP > 0) msg += `💵 Efectivo: $${fp(efectivoP)}\n`;
+      if (bancoP > 0)    msg += `🏦 Bancolombia: $${fp(bancoP)}\n`;
+      if (nequiP > 0)    msg += `📱 Nequi: $${fp(nequiP)}\n`;
+      if (cajerosF.length > 1) {
+        msg += `\n👥 *Por cajero:*\n`;
+        cajerosF.forEach(c => {
+          msg += `• *${c.cajero}*: $${fp(c.total)} (${c.tickets} tkt)\n`;
+          if (c.efectivo > 0)    msg += `   💵 $${fp(c.efectivo)}\n`;
+          if (c.bancolombia > 0) msg += `   🏦 $${fp(c.bancolombia)}\n`;
+          if (c.nequi > 0)       msg += `   📱 $${fp(c.nequi)}\n`;
+        });
+      }
+    }
+
+    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    partes.push(msg);
+
+    if (partes.length === 1) return partes[0];
+    return { tipo: 'mensajes', partes };
   } catch (e) {
     console.error('Error cierres:', e.message);
     return '❌ No pude consultar el movimiento de caja.';
