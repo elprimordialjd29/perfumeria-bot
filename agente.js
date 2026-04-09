@@ -1085,41 +1085,44 @@ async function reporteGastos(desde, hasta, titulo) {
     const fp = monitor.formatPesos;
     const totalGastos = gastos.reduce((s, g) => s + g.valor, 0);
 
-    // Agrupar por concepto (NombreProducto)
-    const porConcepto = {};
+    // ── Agrupar por Documento + Proveedor ──
+    const porPersona = {};
     for (const g of gastos) {
-      if (!porConcepto[g.concepto]) porConcepto[g.concepto] = 0;
-      porConcepto[g.concepto] += g.valor;
+      const key = `${g.documento}||${g.proveedor}`;
+      if (!porPersona[key]) {
+        porPersona[key] = { documento: g.documento, proveedor: g.proveedor, pagos: [], total: 0 };
+      }
+      porPersona[key].pagos.push(g);
+      porPersona[key].total += g.valor;
     }
-    const conceptosOrdenados = Object.entries(porConcepto).sort((a, b) => b[1] - a[1]);
+    const personas = Object.values(porPersona).sort((a, b) => b.total - a.total);
 
     const partes = [];
     let msg = `💸 *GASTOS — ${titulo}*\n`;
-    msg += `_${desde} → ${hasta}_\n\n`;
-    msg += `📋 *Detalle (${gastos.length} registros):*\n\n`;
+    msg += `_${desde} → ${hasta}_ | _${gastos.length} registros_\n\n`;
 
-    gastos.forEach(g => {
-      let linea = `• *${g.concepto}*: *$${fp(g.valor)}*\n`;
-      if (g.detalle)   linea += `  📝 ${g.detalle}\n`;
-      if (g.proveedor) linea += `  👤 ${g.proveedor}\n`;
-      if (g.medioPago) linea += `  💳 ${g.medioPago}\n`;
-      if (g.documento) linea += `  📄 Doc: ${g.documento}\n`;
-      if (g.fecha)     linea += `  📅 ${g.fecha}\n`;
-      linea += '\n';
+    personas.forEach(p => {
+      let bloque = `👤 *${p.proveedor || 'Sin proveedor'}*\n`;
+      if (p.documento) bloque += `📄 Doc: ${p.documento}\n`;
+      bloque += `💰 *Total: $${fp(p.total)}*\n\n`;
 
-      if ((msg + linea).length > 3800) { partes.push(msg); msg = `💸 _(continuación)_\n\n`; }
-      msg += linea;
+      // Pagos por día ordenados
+      const pagosOrdenados = [...p.pagos].sort((a, b) => a.fecha.localeCompare(b.fecha));
+      pagosOrdenados.forEach(g => {
+        bloque += `  📅 ${g.fecha}\n`;
+        bloque += `  • *${g.concepto}*: $${fp(g.valor)}`;
+        if (g.detalle) bloque += ` — ${g.detalle}`;
+        if (g.medioPago) bloque += ` | 💳 ${g.medioPago}`;
+        bloque += `\n`;
+      });
+      bloque += `\n`;
+
+      if ((msg + bloque).length > 3800) { partes.push(msg); msg = `💸 _(continuación)_\n\n`; }
+      msg += bloque;
     });
 
-    // Resumen por concepto
     msg += `─────────────────\n`;
-    msg += `📊 *Por concepto:*\n`;
-    conceptosOrdenados.forEach(([c, v]) => {
-      const pct = totalGastos > 0 ? ((v / totalGastos) * 100).toFixed(0) : 0;
-      msg += `• *${c}*: $${fp(v)} (${pct}%)\n`;
-    });
-
-    msg += `\n💰 *TOTAL GASTOS: $${fp(totalGastos)}*\n`;
+    msg += `💰 *TOTAL GASTOS: $${fp(totalGastos)}*\n`;
     msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
     partes.push(msg);
 
