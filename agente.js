@@ -923,22 +923,25 @@ async function reporteRango(desde, hasta, titulo) {
       });
     }
 
-    if (primeraHoraRango) {
-      const h = primeraHoraRango.hora;
-      const ampm = h >= 12 ? 'PM' : 'AM';
-      const h12  = h % 12 || 12;
-      msg += `\n🕐 *Primera venta:* ${h12}:00 ${ampm}\n`;
-    }
+    // Solo mostrar primera venta y productos si hay ventas reales
+    if (total > 0) {
+      if (primeraHoraRango) {
+        const h = primeraHoraRango.hora;
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const h12  = h % 12 || 12;
+        msg += `\n🕐 *Primera venta:* ${h12}:00 ${ampm}\n`;
+      }
 
-    if (productos.length > 0) {
-      const medallas2 = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-      msg += `\n📦 *Productos vendidos:*\n`;
-      productos.forEach((p, i) => {
-        const cat = monitor.inferirCategoria(p.nombre);
-        const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-        const val = p.valor > 0 ? ` — $${monitor.formatPesos(p.valor)}` : '';
-        msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}${val}\n`;
-      });
+      if (productos.length > 0) {
+        const medallas2 = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+        msg += `\n📦 *Productos vendidos:*\n`;
+        productos.forEach((p, i) => {
+          const cat = monitor.inferirCategoria(p.nombre);
+          const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
+          const val = p.valor > 0 ? ` — $${monitor.formatPesos(p.valor)}` : '';
+          msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}${val}\n`;
+        });
+      }
     }
 
     msg += bloquesMeta(total, desde, hasta);
@@ -1698,24 +1701,26 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
       }
     } // fin else rango múltiple
 
-    // ── Primera venta ──
-    if (primeraHora) {
-      const h = primeraHora.hora;
-      const ampm = h >= 12 ? 'PM' : 'AM';
-      const h12  = h % 12 || 12;
-      msg += `\n🕐 *Primera venta:* ${h12}:00 ${ampm}\n`;
-    }
+    // ── Primera venta y productos — solo si hay ventas reales ──
+    const totalCaja = cajerosF.reduce((s, c) => s + c.total, 0);
+    if (totalCaja > 0) {
+      if (primeraHora) {
+        const h = primeraHora.hora;
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const h12  = h % 12 || 12;
+        msg += `\n🕐 *Primera venta:* ${h12}:00 ${ampm}\n`;
+      }
 
-    // ── Productos vendidos ──
-    if (productos.length > 0) {
-      msg += `\n📦 *Productos vendidos:*\n`;
-      const medallas = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-      productos.forEach((p, i) => {
-        const cat = monitor.inferirCategoria(p.nombre);
-        const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-        const val = p.valor > 0 ? ` — $${monitor.formatPesos(p.valor)}` : '';
-        msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}${val}\n`;
-      });
+      if (productos.length > 0) {
+        msg += `\n📦 *Productos vendidos:*\n`;
+        const medallas = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+        productos.forEach((p, i) => {
+          const cat = monitor.inferirCategoria(p.nombre);
+          const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
+          const val = p.valor > 0 ? ` — $${monitor.formatPesos(p.valor)}` : '';
+          msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}${val}\n`;
+        });
+      }
     }
 
     msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
