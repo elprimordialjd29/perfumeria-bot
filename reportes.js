@@ -41,6 +41,11 @@ function iniciar(bot) {
     await detectarApertura();
   }, { timezone: 'America/Bogota' });
 
+  // ── Alerta de nuevas ventas: cada 5 minutos ──
+  cron.schedule('*/5 * * * *', async () => {
+    await detectarNuevaVenta();
+  }, { timezone: 'America/Bogota' });
+
   // ── Reporte de mediodía: 12:00 PM ──
   cron.schedule('0 12 * * *', async () => {
     console.log('🌞 Enviando reporte mediodía...');
@@ -462,6 +467,77 @@ async function detectarApertura() {
 
   } catch(e) {
     console.error('Error detector apertura:', e.message);
+  }
+}
+
+// ──────────────────────────────────────────────
+// DETECTOR DE NUEVA VENTA
+// Cada 5 min revisa si hay nuevas ventas y notifica
+// ──────────────────────────────────────────────
+
+async function detectarNuevaVenta() {
+  try {
+    const hoy = monitor.fechaHoy();
+    const fp  = (v) => Math.round(v).toLocaleString('es-CO');
+
+    const cfg = await db.obtenerConfig();
+    const ultimoTotalConocido = parseFloat(cfg?.ultimo_total_ventas || '0');
+
+    const { browser, page } = await monitor.crearSesionPOS();
+    const cajeros  = await monitor.extraerVentasCajero(page, hoy, hoy);
+    const productos = await monitor.extraerVentasProducto(page, hoy, hoy);
+    await browser.close();
+
+    const totalCajeros = cajeros.reduce((s, c) => s + c.total, 0);
+    const totalProds   = productos.filter(p => !(p.nombre||'').toLowerCase().includes('preparac'))
+                                   .reduce((s, p) => s + (p.valor || 0), 0);
+    const totalActual  = totalCajeros > 0 ? totalCajeros : totalProds;
+
+    if (totalActual <= ultimoTotalConocido) return; // sin cambios
+
+    // Calcular cuánto es la nueva venta
+    const nuevaVenta = totalActual - ultimoTotalConocido;
+    await db.actualizarConfig({ ultimo_total_ventas: String(totalActual) });
+
+    // Solo notificar si la diferencia es significativa (> $1.000)
+    if (nuevaVenta < 1000) return;
+
+    const efectivo = cajeros.reduce((s, c) => s + (c.efectivo    || 0), 0);
+    const banco    = cajeros.reduce((s, c) => s + (c.bancolombia || 0), 0);
+    const nequi    = cajeros.reduce((s, c) => s + (c.nequi       || 0), 0);
+
+    const meta       = parseInt(process.env.META_MENSUAL) || 10000000;
+    const diasEnMes  = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+    const metaDiaria = Math.round(meta / diasEnMes);
+    const pct        = Math.min(100, Math.round((totalActual / metaDiaria) * 100));
+    const barra      = Math.min(Math.round(pct / 10), 10);
+    const progreso   = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
+
+    // Últimos productos vendidos
+    const ultimos = productos
+      .filter(p => !(p.nombre||'').toLowerCase().includes('preparac'))
+      .slice(0, 3);
+
+    let msg = `🛍️ *NUEVA VENTA — ${hoy}*\n\n`;
+    msg += `💰 *+$${fp(nuevaVenta)}*\n`;
+    msg += `📊 Total del día: *$${fp(totalActual)}*\n`;
+    if (efectivo > 0) msg += `💵 Efectivo: $${fp(efectivo)}\n`;
+    if (banco > 0)    msg += `🏦 Transferencia: $${fp(banco)}\n`;
+    if (nequi > 0)    msg += `📱 Nequi: $${fp(nequi)}\n`;
+    msg += `\n${progreso} ${pct}% meta\n`;
+    if (ultimos.length > 0) {
+      msg += `\n📦 *Productos:*\n`;
+      ultimos.forEach(p => {
+        const cat = monitor.inferirCategoria(p.nombre);
+        const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
+        const val = p.valor > 0 ? ` — $${fp(p.valor)}` : '';
+        msg += `• *${p.nombre}*: ${p.cantidad} ${uni}${val}\n`;
+      });
+    }
+    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    await notificar('🛍️ Nueva Venta', msg);
+  } catch(e) {
+    console.error('Error detector nueva venta:', e.message);
   }
 }
 

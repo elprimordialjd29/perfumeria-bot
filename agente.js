@@ -1637,24 +1637,36 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
       const esHoy = fecha === hoy;
       msg += `📅 *${esHoy ? 'HOY' : fecha} — ${fecha}*\n\n`;
 
-      if (cajerosF.length === 0) {
+      // Total real: cajeros si hay, sino suma de productos
+      const totalCajeros = cajerosF.reduce((s, c) => s + c.total, 0);
+      const totalProds   = productos.reduce((s, p) => s + (p.valor || 0), 0);
+      const totalReal    = totalCajeros > 0 ? totalCajeros : totalProds;
+      const efectivoF    = cajerosF.reduce((s, c) => s + (c.efectivo    || 0), 0);
+      const bancoF       = cajerosF.reduce((s, c) => s + (c.bancolombia || 0), 0);
+      const nequiF       = cajerosF.reduce((s, c) => s + (c.nequi       || 0), 0);
+      const ticketsF     = cajerosF.reduce((s, c) => s + c.tickets, 0);
+
+      if (totalReal === 0) {
         msg += `_Sin ventas registradas_\n\n`;
       } else {
-        cajerosF.forEach(c => {
-          msg += `👤 *${c.cajero}* | 🎫 ${c.tickets} tickets\n`;
-          if (c.total > 0)        msg += `   💰 Total: *$${fp(c.total)}*\n`;
-          if (c.efectivo > 0)     msg += `   💵 Efectivo: $${fp(c.efectivo)}\n`;
-          if (c.bancolombia > 0)  msg += `   🏦 Bancolombia: $${fp(c.bancolombia)}\n`;
-          if (c.nequi > 0)        msg += `   📱 Nequi: $${fp(c.nequi)}\n`;
+        if (cajerosF.length > 0) {
+          cajerosF.forEach(c => {
+            msg += `👤 *${c.cajero}* | 🎫 ${c.tickets} tickets\n`;
+          });
           msg += `\n`;
-        });
+        }
+        msg += `💰 Total: *$${fp(totalReal)}*\n`;
+        if (ticketsF > 0)  msg += `🎫 Tickets: ${ticketsF}\n`;
+        if (efectivoF > 0) msg += `💵 Efectivo: $${fp(efectivoF)}\n`;
+        if (bancoF > 0)    msg += `🏦 Transferencia: $${fp(bancoF)}\n`;
+        if (nequiF > 0)    msg += `📱 Nequi: $${fp(nequiF)}\n`;
+        msg += `\n`;
 
         if (esHoy) {
-          const totalHoy = cajerosF.reduce((s, c) => s + c.total, 0);
-          const pct      = Math.min(100, Math.round((totalHoy / metaDiaria) * 100));
+          const pct      = Math.min(100, Math.round((totalReal / metaDiaria) * 100));
           const barra    = Math.min(Math.round(pct / 10), 10);
           const progreso = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
-          const falta    = Math.max(0, metaDiaria - totalHoy);
+          const falta    = Math.max(0, metaDiaria - totalReal);
           msg += `🎯 *Meta del día: $${fp(metaDiaria)}*\n`;
           msg += `${progreso} ${pct}%\n`;
           msg += falta > 0 ? `📉 Falta: *$${fp(falta)}*\n` : `🏆 *¡Meta cumplida!*\n`;
