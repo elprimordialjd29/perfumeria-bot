@@ -1046,6 +1046,17 @@ async function reporteRankingPOS(desde, hasta, titulo) {
 // CHECKLIST CONTENIDO REDES SOCIALES
 // ──────────────────────────────────────────────
 
+// Elimina menciones de precios del texto de contenido (ej: $5.000, $190.000, $5k)
+function quitarPrecios(texto) {
+  if (!texto) return texto;
+  return texto
+    .replace(/desde\s+\*?\$[\d.,]+k?\*?/gi, '')   // "desde $5.000"
+    .replace(/\*?\$[\d.,]+k?\*?/g, '')             // "$190.000" o "*$5.000*"
+    .replace(/[ \t]*—[ \t]*(\n|$)/gm, '$1')        // guiones solos al final de línea
+    .replace(/\n{3,}/g, '\n\n')                    // líneas vacías extra
+    .trim();
+}
+
 async function planContenidoSemana() {
   const contenido = require('./contenido');
   const hoy = new Date();
@@ -1074,20 +1085,20 @@ async function planContenidoSemana() {
     let bloque = `*${nombre}${esHoy ? ' (hoy)' : ''}*\n`;
     bloque += `📌 _${cal.tema}_\n\n`;
 
-    bloque += `📱 *WhatsApp:*\n${cal.whatsapp}\n\n`;
+    bloque += `📱 *WhatsApp:*\n${quitarPrecios(cal.whatsapp)}\n\n`;
 
     if (cal.instagram) {
       bloque += `📸 *Instagram — ${cal.instagram.tipo}:*\n`;
-      bloque += `💡 ${cal.instagram.idea}\n`;
-      bloque += `_Copy:_ ${cal.instagram.copy}\n\n`;
+      bloque += `💡 ${quitarPrecios(cal.instagram.idea)}\n`;
+      bloque += `_Copy:_ ${quitarPrecios(cal.instagram.copy)}\n\n`;
     } else {
       bloque += `📸 Instagram: ➖ _No toca_\n\n`;
     }
 
     if (cal.tiktok) {
       bloque += `🎵 *TikTok — ${cal.tiktok.tipo}:*\n`;
-      bloque += `💡 ${cal.tiktok.idea}\n`;
-      bloque += `_Copy:_ ${cal.tiktok.copy}\n\n`;
+      bloque += `💡 ${quitarPrecios(cal.tiktok.idea)}\n`;
+      bloque += `_Copy:_ ${quitarPrecios(cal.tiktok.copy)}\n\n`;
     } else {
       bloque += `🎵 TikTok: ➖ _No toca_\n\n`;
     }
