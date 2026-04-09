@@ -629,7 +629,7 @@ function _inferirCategoria(nombre, medida = '') {
   if (n.includes('original')) return 'ORIGINALES';
   if (n.includes(' 1.1') || n.endsWith('1.1')) return 'REPLICA 1.1';
   if (['crema','locion','loción','mantequilla','corporal','body'].some(k => n.includes(k))) return 'CREMA CORPORAL';
-  if (['alcohol','gramera','insumo','tapón','tapon','recarga'].some(k => n.includes(k))) return 'INSUMOS VARIOS';
+  if (['alcohol','gramera','insumo','tapón','tapon'].some(k => n.includes(k))) return 'INSUMOS VARIOS';
   const kwEnvase = [
     'envase','tapa plana','tapa bala','singler','beirut','bomba','cartier','frasco',
     'botella','perfumero','maletín','maletin','star w','venecia','roma ',
