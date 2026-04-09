@@ -898,15 +898,16 @@ async function reporteRango(desde, hasta, titulo) {
 
     const primeraHoraRango = horasData.filter(h => h.total > 0).sort((a, b) => a.hora - b.hora)[0] || null;
 
-    // extraerVentasGenerales puede retornar 0 para rangos cortos por formato de fecha;
-    // usamos cajeros como fuente principal de total/tickets (siempre confiable)
-    const totalDeCajeros  = cajeros.reduce((s, c) => s + c.total, 0);
+    const totalDeCajeros   = cajeros.reduce((s, c) => s + c.total,   0);
     const ticketsDeCajeros = cajeros.reduce((s, c) => s + c.tickets, 0);
-    const totalDeVentas   = ventas.reduce((s, v) => s + v.totalVentas, 0);
-    const ticketsDeVentas = ventas.reduce((s, v) => s + v.tickets, 0);
+    const totalDeVentas    = ventas.reduce((s, v)  => s + v.totalVentas, 0);
+    const ticketsDeVentas  = ventas.reduce((s, v)  => s + v.tickets,     0);
+    // Fallback: si cajeros y ventas generales dan 0, usar suma de productos
+    const totalDeProductos = prodRaw.reduce((s, p) => s + p.valor, 0);
 
-    const total   = totalDeCajeros   > 0 ? totalDeCajeros   : totalDeVentas;
-    const tickets = ticketsDeCajeros > 0 ? ticketsDeCajeros : ticketsDeVentas;
+    const total   = totalDeCajeros   > 0 ? totalDeCajeros   : totalDeVentas   > 0 ? totalDeVentas   : totalDeProductos;
+    const tickets = ticketsDeCajeros > 0 ? ticketsDeCajeros : ticketsDeVentas > 0 ? ticketsDeVentas : 0;
+    const haySales = total > 0;
     const medallas = ['🥇', '🥈', '🥉'];
 
     let msg = `📊 *REPORTE — ${tituloFinal}*\n`;
@@ -915,7 +916,14 @@ async function reporteRango(desde, hasta, titulo) {
     msg += `🎫 Tickets: ${tickets}\n`;
     if (tickets > 0) msg += `💵 Promedio ticket: $${Math.round(total / tickets).toLocaleString('es-CO')}\n`;
 
-    if (cajeros.length > 0) {
+    // Medios de pago (solo si cajeros tienen datos)
+    if (cajeros.length > 0 && totalDeCajeros > 0) {
+      const efectivo  = cajeros.reduce((s, c) => s + (c.efectivo    || 0), 0);
+      const banco     = cajeros.reduce((s, c) => s + (c.bancolombia || 0), 0);
+      const nequi     = cajeros.reduce((s, c) => s + (c.nequi       || 0), 0);
+      if (efectivo > 0)  msg += `💵 Efectivo: $${efectivo.toLocaleString('es-CO')}\n`;
+      if (banco > 0)     msg += `🏦 Bancolombia: $${banco.toLocaleString('es-CO')}\n`;
+      if (nequi > 0)     msg += `📱 Nequi: $${nequi.toLocaleString('es-CO')}\n`;
       msg += `\n👥 *RANKING CAJEROS:*\n`;
       cajeros.forEach((c, i) => {
         const pct = total > 0 ? ((c.total / total) * 100).toFixed(0) : 0;
@@ -923,8 +931,8 @@ async function reporteRango(desde, hasta, titulo) {
       });
     }
 
-    // Solo mostrar primera venta y productos si hay ventas reales
-    if (total > 0) {
+    // Primera venta y productos — solo si hay ventas
+    if (haySales) {
       if (primeraHoraRango) {
         const h = primeraHoraRango.hora;
         const ampm = h >= 12 ? 'PM' : 'AM';
