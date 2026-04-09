@@ -1023,5 +1023,6 @@ module.exports = {
   UMBRALES_PRODUCTO,
   inferirCategoria: _inferirCategoria,
   getNivelAlerta,
+  getUmbral: _getUmbral,
   obtenerCategoriaProductos,
 };

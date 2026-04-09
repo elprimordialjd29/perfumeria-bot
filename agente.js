@@ -1897,13 +1897,12 @@ async function reporteRestock(soloAgotados = true) {
     // Filtrar según modo
     const bajos = inventario.filter(p => {
       if (soloAgotados) {
-        // Unidades (ORIGINALES, RÉPLICAS): solo si saldo = 0
+        // ORIGINALES y RÉPLICAS: solo si saldo = 0 (independiente de medida)
         const cat = (p.categoria || '').toUpperCase();
-        const esUnidad = !p.medida?.toLowerCase().match(/^(gr|g|ml)/);
-        if (esUnidad && (cat.includes('ORIGINAL') || cat.includes('REPLICA'))) {
+        if (cat.includes('ORIGINAL') || cat.includes('REPLICA')) {
           return p.saldo <= 0;
         }
-        // Esencias y envases con umbral específico: agotado o crítico
+        // Esencias, envases y demás: agotado o crítico según umbral real
         const nivel = monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria);
         return nivel.includes('AGOTADO') || nivel.includes('CRÍTICO');
       }
@@ -1945,15 +1944,14 @@ async function reporteRestock(soloAgotados = true) {
       const emoji = CAT_EMOJI[catKey] || '📦';
       let bloqueCat = `${emoji} *${catKey}* (${lista.length})\n`;
       lista.forEach(p => {
-        const umbralKey = Object.keys(monitor.UMBRALES).find(k => catKey.includes(k) || k.includes(catKey));
-        const umbralCat = umbralKey ? monitor.UMBRALES[umbralKey] : null;
-        const limiteReponer = umbralCat?.alerta || (p.medida?.toLowerCase().includes('gr') ? 500 : 20);
-        const esRestock = umbralCat ? umbralCat.restock : true;
-        const nivelCritico = umbralCat?.critico || 5;
-        const nivel = p.saldo <= 0 ? '🚨' : p.saldo <= nivelCritico ? '🔴' : '🟡';
-        bloqueCat += `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'u'}\n`;
+        // Usar _getUmbral que incluye UMBRALES_PRODUCTO (ej: SINGLER critico=100)
+        const umbral = monitor.getUmbral(p.nombre, p.medida, p.categoria);
+        const esRestock = umbral.restock !== false;
+        const nivelStr = monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria);
+        const nivelEmoji = nivelStr.includes('AGOTADO') ? '🚨' : nivelStr.includes('CRÍTICO') ? '🔴' : '🟡';
+        bloqueCat += `${nivelEmoji} *${p.nombre}*: ${p.saldo} ${p.medida || 'u'}\n`;
         if (p.costoUnidad > 0 && esRestock) {
-          const reponer = Math.max(0, limiteReponer - p.saldo);
+          const reponer = Math.max(0, umbral.alerta - p.saldo);
           const costoReponer = Math.round(reponer * p.costoUnidad);
           totalRestock += costoReponer;
           if (reponer > 0) bloqueCat += `   🛒 Reponer ${reponer} → *$${fp(costoReponer)}*\n`;
