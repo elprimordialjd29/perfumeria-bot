@@ -390,7 +390,7 @@ async function detectarNuevoCierre() {
       });
     }
 
-    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
 
     await notificar('🏧 Cierre de Caja', msg);
     console.log(`🏧 Cierre detectado y notificado: ${cajeroNombre}`);
@@ -456,7 +456,7 @@ async function detectarApertura() {
       msg += `🥇 *${productos[0].producto || productos[0].nombre}*\n`;
     }
 
-    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     await notificar('🔓 Apertura de Caja', msg);
     console.log(`🔓 Apertura detectada y notificada: ${activos.map(c => c.cajero).join(', ')}`);
 
@@ -536,7 +536,7 @@ async function enviarReporteMediodia() {
       });
     }
 
-    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     await notificar('🌞 Reporte Mediodía', msg);
   } catch(e) {
     console.error('Error reporte mediodía:', e.message);

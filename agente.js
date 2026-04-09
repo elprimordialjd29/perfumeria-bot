@@ -749,7 +749,7 @@ async function reporteGeneral() {
       });
     }
 
-    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
 
     // Inventario bajo — todos, dividido en partes separadas
     const partesMsgs = [msg];
@@ -922,7 +922,7 @@ async function reporteRango(desde, hasta, titulo) {
     }
 
     msg += bloquesMeta(total, desde, hasta);
-    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     return msg;
   } catch (e) {
     console.error('Error reporte rango:', e.message);
@@ -967,7 +967,7 @@ async function reporteCajeroIndividual(nombre, desde, hasta, titulo) {
     if (encontrado.nequi > 0)       msg += `\n📱 Nequi: $${encontrado.nequi.toLocaleString('es-CO')}`;
     msg += `\n`;
     msg += bloquesMeta(encontrado.total, desde, hasta);
-    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     return msg;
   } catch (e) {
     console.error('Error cajero individual:', e.message);
@@ -1030,7 +1030,7 @@ async function reporteRankingPOS(desde, hasta, titulo) {
 
     msg += `💵 *Total: $${totalGeneral.toLocaleString('es-CO')}*\n`;
     msg += bloquesMeta(totalGeneral, desde, hasta);
-    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     return msg;
   } catch (e) {
     console.error('Error ranking:', e.message);
@@ -1379,7 +1379,7 @@ async function reporteProductos(desde, hasta, titulo) {
       msg += `• *${p.nombre}*: ${p.cantidad} ${uni} — $${fp(p.valor)} (~$${fp(precioUnd)}/${uni === 'gr' ? 'g' : 'u'})\n`;
     });
 
-    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     partes.push(msg);
 
     if (partes.length === 1) return partes[0];
@@ -1441,7 +1441,7 @@ async function reporteMediosPago(desde, hasta, titulo) {
     msg += `🏦 *Transferencias:* $${transferencias.toLocaleString('es-CO')} (${pctTransf}%)\n`;
     if (totales.bancolombia > 0) msg += `   • Bancolombia: $${totales.bancolombia.toLocaleString('es-CO')}\n`;
     if (totales.nequi > 0)       msg += `   • Nequi: $${totales.nequi.toLocaleString('es-CO')}\n`;
-    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     return msg;
   } catch(e) {
     return '❌ No pude consultar los medios de pago.';
@@ -1475,7 +1475,7 @@ async function reporteQuienTrabajo() {
       msg += `   💵 Efectivo: $${(c.efectivo||0).toLocaleString('es-CO')} | 🏦 Transfer: $${((c.bancolombia||0)+(c.nequi||0)).toLocaleString('es-CO')}\n\n`;
     });
 
-    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     return msg;
   } catch(e) {
     return '❌ No pude consultar quién trabajó hoy.';
@@ -1535,7 +1535,7 @@ async function reporteGastos(desde, hasta, titulo) {
 
     msg += `─────────────────\n`;
     msg += `💰 *TOTAL GASTOS: $${fp(totalGastos)}*\n`;
-    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     partes.push(msg);
 
     if (partes.length === 1) return partes[0];
@@ -1696,7 +1696,7 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
       });
     }
 
-    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     partes.push(msg);
 
     if (partes.length === 1) return partes[0];
@@ -1734,7 +1734,7 @@ async function reporteVentasPorHora(desde, hasta, titulo) {
     });
 
     msg += `\n💰 Total: $${total.toLocaleString('es-CO')}`;
-    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     return msg;
   } catch (e) {
     console.error('Error ventas hora:', e.message);
@@ -1808,7 +1808,7 @@ async function reporteInventarioCategoria(categoria) {
       });
     }
     if (umbral.restock && totalRestock > 0) parte += `\n💰 *Inversión estimada: $${fp(totalRestock)}*\n`;
-    parte += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    parte += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     partes.push(parte);
 
     if (partes.length === 1) return partes[0];
@@ -1894,7 +1894,7 @@ async function reporteRestock() {
       pie += `💰 *INVERSIÓN TOTAL PARA RESTOCK: $${monitor.formatPesos(totalRestock)}*\n`;
       pie += `_Para reponer al mínimo recomendado_\n`;
     }
-    pie += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    pie += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     parteActual += pie;
     partes.push(parteActual);
 
@@ -1965,7 +1965,7 @@ async function reporteVentasVsInventario() {
     const encabezado = `📦 *VENTAS VS INVENTARIO — ${mes.toUpperCase()}*\n_${monitor.fechaInicioMes()} → ${monitor.fechaHoy()}_\n_(${items.length} productos)_\n\n`;
     let pie = `\n💰 *Total vendido: $${totalVendido.toLocaleString('es-CO')}*\n`;
     if (totalStockVal > 0) pie += `🏦 Valor total en stock: $${totalStockVal.toLocaleString('es-CO')}\n`;
-    pie += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    pie += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
 
     const partes = [];
     let parteActual = encabezado;
@@ -2038,7 +2038,7 @@ async function cruzarProductoRango(query, desde, hasta) {
       msg += '\n';
     });
 
-    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     return msg;
   } catch(e) {
     console.error('Error cruce producto rango:', e.message);
@@ -2129,7 +2129,7 @@ async function cruzarProducto(query) {
       msg += '\n';
     });
 
-    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     return msg;
 
   } catch(e) {
