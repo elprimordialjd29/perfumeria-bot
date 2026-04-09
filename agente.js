@@ -1918,64 +1918,67 @@ async function reporteRestock(soloAgotados = true) {
       ? '✅ No hay productos agotados ni críticos.'
       : '✅ *Restock:* Todos los productos tienen stock suficiente.';
 
-    const tieneCostos = bajos.some(p => p.costoUnidad > 0);
-
-    const lineas = [];
+    const fp = monitor.formatPesos;
     let totalRestock = 0;
 
-    // Agotados primero
-    bajos.sort((a, b) => {
-      if (a.saldo === 0 && b.saldo > 0) return -1;
-      if (b.saldo === 0 && a.saldo > 0) return 1;
-      return a.saldo - b.saldo;
-    });
+    const ORDEN_CATS = ['ESENCIAS M','ESENCIAS F','ESENCIAS U','ESENCIAS','ENVASE','ORIGINALES','REPLICA 1.1','CREMA CORPORAL','INSUMOS VARIOS','OTROS'];
+    const CAT_EMOJI = {
+      'ESENCIAS M': '🧪', 'ESENCIAS F': '🌸', 'ESENCIAS U': '🌀',
+      'ESENCIAS': '🧪', 'ENVASE': '🧴', 'ORIGINALES': '✨',
+      'REPLICA 1.1': '🔁', 'CREMA CORPORAL': '💆', 'INSUMOS VARIOS': '🔧', 'OTROS': '📦',
+    };
 
-    const fp = monitor.formatPesos;
+    // Agrupar por categoría
+    const grupos = {};
     bajos.forEach(p => {
-      const cat = (p.categoria || '').toUpperCase();
-      const umbralKey = Object.keys(monitor.UMBRALES).find(k => cat.includes(k) || k.includes(cat));
-      const umbralCat = umbralKey ? monitor.UMBRALES[umbralKey] : null;
-      const limiteReponer = umbralCat?.alerta ||
-        (p.medida?.toLowerCase().includes('gr') ? 500 : 20);
-      const esRestock = umbralCat ? umbralCat.restock : true;
-      const nivelCritico = umbralCat?.critico || 5;
-
-      const nivel = p.saldo <= 0 ? '🚨' : p.saldo <= nivelCritico ? '🔴' : '🟡';
-      let bloque = `${nivel} *${p.nombre}*`;
-      if (p.categoria) bloque += ` _(${p.categoria})_`;
-      bloque += `\n   📦 Saldo: ${p.saldo} ${p.medida}\n`;
-
-      if (p.costoUnidad > 0) {
-        bloque += `   💵 Costo unidad: $${fp(p.costoUnidad)}\n`;
-      }
-      if (tieneCostos && p.costoUnidad > 0 && esRestock) {
-        const reponer = Math.max(0, limiteReponer - p.saldo);
-        const costoReponer = Math.round(reponer * p.costoUnidad);
-        totalRestock += costoReponer;
-        bloque += `   🛒 Reponer: ${reponer} ${p.medida} → *$${fp(costoReponer)}*\n`;
-      } else if (!esRestock) {
-        bloque += `   ℹ️ Solo alerta (sin restock programado)\n`;
-      }
-      lineas.push(bloque);
+      const cat = (p.categoria || 'OTROS').toUpperCase().trim();
+      const catKey = ORDEN_CATS.find(k => cat.includes(k)) || 'OTROS';
+      if (!grupos[catKey]) grupos[catKey] = [];
+      grupos[catKey].push(p);
     });
+
+    // Construir líneas por categoría
+    const bloquesCat = [];
+    const cats = [...ORDEN_CATS.filter(c => grupos[c])];
+    for (const catKey of cats) {
+      const lista = grupos[catKey].sort((a, b) => a.saldo - b.saldo);
+      const emoji = CAT_EMOJI[catKey] || '📦';
+      let bloqueCat = `${emoji} *${catKey}* (${lista.length})\n`;
+      lista.forEach(p => {
+        const umbralKey = Object.keys(monitor.UMBRALES).find(k => catKey.includes(k) || k.includes(catKey));
+        const umbralCat = umbralKey ? monitor.UMBRALES[umbralKey] : null;
+        const limiteReponer = umbralCat?.alerta || (p.medida?.toLowerCase().includes('gr') ? 500 : 20);
+        const esRestock = umbralCat ? umbralCat.restock : true;
+        const nivelCritico = umbralCat?.critico || 5;
+        const nivel = p.saldo <= 0 ? '🚨' : p.saldo <= nivelCritico ? '🔴' : '🟡';
+        bloqueCat += `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'u'}\n`;
+        if (p.costoUnidad > 0 && esRestock) {
+          const reponer = Math.max(0, limiteReponer - p.saldo);
+          const costoReponer = Math.round(reponer * p.costoUnidad);
+          totalRestock += costoReponer;
+          if (reponer > 0) bloqueCat += `   🛒 Reponer ${reponer} → *$${fp(costoReponer)}*\n`;
+        }
+      });
+      bloqueCat += `\n`;
+      bloquesCat.push(bloqueCat);
+    }
 
     const encabezado = soloAgotados
       ? `🚨 *LO QUE FALTA (${bajos.length} productos)*\n\n`
       : `💰 *RESTOCK COMPLETO (${bajos.length} productos bajos)*\n\n`;
     const partes = [];
     let parteActual = encabezado;
-    for (const linea of lineas) {
-      if ((parteActual + linea).length > 3500) {
+    for (const bloque of bloquesCat) {
+      if ((parteActual + bloque).length > 3500) {
         partes.push(parteActual);
-        parteActual = `💰 _(restock — continuación)_\n\n`;
+        parteActual = `🚨 _(continuación)_\n\n`;
       }
-      parteActual += linea;
+      parteActual += bloque;
     }
 
-    let pie = `\n`;
-    if (tieneCostos && totalRestock > 0) {
-      pie += `💰 *INVERSIÓN TOTAL PARA RESTOCK: $${monitor.formatPesos(totalRestock)}*\n`;
-      pie += `_Para reponer al mínimo recomendado_\n`;
+    let pie = ``;
+    if (totalRestock > 0) {
+      pie += `💰 *INVERSIÓN TOTAL: $${fp(totalRestock)}*\n`;
     }
     pie += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     parteActual += pie;
