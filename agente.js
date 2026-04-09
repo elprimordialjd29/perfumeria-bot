@@ -950,20 +950,24 @@ async function reporteRango(desde, hasta, titulo) {
       if (productos.length > 0) {
         const medallas2 = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
         const fp2 = monitor.formatPesos;
+        const sumaProd = productos.reduce((s, p) => s + (p.valor || 0), 0);
         msg += `\n📦 *Productos vendidos:*\n`;
-        let sumaProductos = 0;
+        let sumaTotal = 0;
         productos.forEach((p, i) => {
           const cat = monitor.inferirCategoria(p.nombre);
           const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-          const val = p.valor > 0 ? ` — $${fp2(p.valor)}` : '';
-          sumaProductos += p.valor || 0;
-          msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}${val}\n`;
+          // Distribuir preparación proporcionalmente al valor del producto
+          const prepProp = sumaProd > 0 && totalPreparaciones > 0
+            ? Math.round((p.valor / sumaProd) * totalPreparaciones)
+            : 0;
+          const valorTotal = (p.valor || 0) + prepProp;
+          sumaTotal += valorTotal;
+          const detalle = prepProp > 0
+            ? ` ($${fp2(p.valor)} + $${fp2(prepProp)} prep) = *$${fp2(valorTotal)}*`
+            : ` — $${fp2(p.valor)}`;
+          msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}${detalle}\n`;
         });
-        if (totalPreparaciones > 0) {
-          sumaProductos += totalPreparaciones;
-          msg += `✂️ *Preparación/servicio*: $${fp2(totalPreparaciones)}\n`;
-        }
-        msg += `_Subtotal productos: $${fp2(sumaProductos)}_\n`;
+        msg += `_Total: $${fp2(sumaTotal)}_\n`;
       }
     }
 
