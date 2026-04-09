@@ -1279,38 +1279,44 @@ async function reporteProductos(desde, hasta, titulo) {
     const totalValor    = productos.reduce((s, p) => s + p.valor, 0);
     const totalCantidad = productos.reduce((s, p) => s + p.cantidad, 0);
 
+    // Unidad según categoría
+    const unidadCat = (cat) => cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
+    const unidadProd = (p) => unidadCat(monitor.inferirCategoria(p.nombre));
+
     const partes = [];
     let msg = `📦 *PRODUCTOS — ${titulo}*\n`;
-    msg += `_${productos.length} productos | $${fp(totalValor)} | ${totalCantidad} uds_\n\n`;
+    msg += `_${productos.length} productos | $${fp(totalValor)} | ${totalCantidad} uds vendidos_\n\n`;
 
     // Helper: bloque por categoría
-    const bloqueCategoria = (emoji, nombre, lista) => {
+    const bloqueCategoria = (emoji, nombre, lista, cat) => {
       if (!lista.length) return;
       const top = lista.slice(0, 5);
       const totalCat = lista.reduce((s, p) => s + p.valor, 0);
+      const uni = unidadCat(cat || nombre);
       msg += `${emoji} *${nombre}* — $${fp(totalCat)}\n`;
       top.forEach((p, i) => {
         const precioUnd = p.cantidad > 0 ? Math.round(p.valor / p.cantidad) : 0;
         msg += `${icons[i]} *${p.nombre}*\n`;
-        msg += `   💰 $${fp(p.valor)} | ${p.cantidad} uds | ~$${fp(precioUnd)}/u\n`;
+        msg += `   💰 $${fp(p.valor)} | ${p.cantidad} ${uni} | ~$${fp(precioUnd)}/${uni === 'gr' ? 'g' : 'u'}\n`;
       });
       if (lista.length > 5) msg += `   _+${lista.length - 5} más_\n`;
       msg += `\n`;
       if (msg.length > 3500) { partes.push(msg); msg = `📦 _(continuación)_\n\n`; }
     };
 
-    bloqueCategoria('🧪', 'ESENCIAS',    grupos.ESENCIAS);
-    bloqueCategoria('🧴', 'ENVASES',     grupos.ENVASE);
-    bloqueCategoria('✨', 'ORIGINALES',  grupos.ORIGINALES);
-    bloqueCategoria('🔁', 'RÉPLICAS 1.1', grupos['REPLICA 1.1']);
-    if (grupos.OTROS.length) bloqueCategoria('📦', 'OTROS', grupos.OTROS);
+    bloqueCategoria('🧪', 'ESENCIAS',      grupos.ESENCIAS,       'ESENCIAS');
+    bloqueCategoria('🧴', 'ENVASES',       grupos.ENVASE,         'ENVASE');
+    bloqueCategoria('✨', 'ORIGINALES',    grupos.ORIGINALES,     'ORIGINALES');
+    bloqueCategoria('🔁', 'RÉPLICAS 1.1', grupos['REPLICA 1.1'], 'REPLICA 1.1');
+    if (grupos.OTROS.length) bloqueCategoria('📦', 'OTROS', grupos.OTROS, 'OTROS');
 
     // Menos vendidos (global, sin preparación)
     const bottom5 = [...productos].sort((a, b) => a.valor - b.valor).slice(0, 5);
     msg += `📉 *MENOS VENDIDOS:*\n`;
     bottom5.forEach(p => {
       const precioUnd = p.cantidad > 0 ? Math.round(p.valor / p.cantidad) : 0;
-      msg += `• *${p.nombre}*: ${p.cantidad} uds — $${fp(p.valor)} (~$${fp(precioUnd)}/u)\n`;
+      const uni = unidadProd(p);
+      msg += `• *${p.nombre}*: ${p.cantidad} ${uni} — $${fp(p.valor)} (~$${fp(precioUnd)}/${uni === 'gr' ? 'g' : 'u'})\n`;
     });
 
     msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
