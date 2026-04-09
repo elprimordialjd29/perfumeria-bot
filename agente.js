@@ -1082,6 +1082,7 @@ async function reporteGastos(desde, hasta, titulo) {
 
     if (!gastos.length) return `💸 Sin gastos registrados para ${titulo}.`;
 
+    const fp = monitor.formatPesos;
     const totalGastos = gastos.reduce((s, g) => s + g.valor, 0);
 
     // Agrupar por concepto
@@ -1092,30 +1093,37 @@ async function reporteGastos(desde, hasta, titulo) {
     }
     const conceptosOrdenados = Object.entries(porConcepto).sort((a, b) => b[1] - a[1]);
 
+    const partes = [];
     let msg = `💸 *GASTOS — ${titulo}*\n`;
     msg += `_${desde} → ${hasta}_\n\n`;
-    if (totalGastos > 0) msg += `💰 *Total gastos: $${totalGastos.toLocaleString('es-CO')}*\n\n`;
+    msg += `📋 *Detalle (${gastos.length} registros):*\n`;
 
-    msg += `📋 *Detalle:*\n`;
-    gastos.slice(0, 10).forEach(g => {
-      msg += `• *${g.concepto}*`;
-      if (g.detalle) msg += ` — ${g.detalle}`;
-      if (g.tercero) msg += ` (${g.tercero})`;
-      if (g.valor > 0) msg += `: $${g.valor.toLocaleString('es-CO')}`;
-      if (g.fecha) msg += ` 📅 ${g.fecha}`;
-      msg += '\n';
+    gastos.forEach(g => {
+      let linea = `• *${g.concepto}*`;
+      if (g.detalle && g.detalle !== g.concepto) linea += ` — ${g.detalle}`;
+      if (g.tercero) linea += ` _(${g.tercero})_`;
+      linea += g.valor > 0 ? `: *$${fp(g.valor)}*` : ': $0';
+      if (g.fecha) linea += `\n  📅 ${g.fecha}`;
+      linea += '\n';
+
+      if ((msg + linea).length > 3800) { partes.push(msg); msg = `💸 _(continuación)_\n\n`; }
+      msg += linea;
     });
-    if (gastos.length > 10) msg += `_(y ${gastos.length - 10} más...)_\n`;
 
-    if (conceptosOrdenados.length > 1) {
-      msg += `\n📊 *Por concepto:*\n`;
-      conceptosOrdenados.forEach(([c, v]) => {
-        if (v > 0) msg += `• ${c}: $${v.toLocaleString('es-CO')}\n`;
-      });
-    }
+    // Resumen por concepto
+    msg += `\n─────────────────\n`;
+    msg += `📊 *Por concepto:*\n`;
+    conceptosOrdenados.forEach(([c, v]) => {
+      const pct = totalGastos > 0 ? ((v / totalGastos) * 100).toFixed(0) : 0;
+      msg += `• *${c}*: $${fp(v)} (${pct}%)\n`;
+    });
 
-    msg += `\n─────────────────\n🤖 _VectorPOS — Chu_`;
-    return msg;
+    msg += `\n💰 *TOTAL GASTOS: $${fp(totalGastos)}*\n`;
+    msg += `─────────────────\n🤖 _VectorPOS — Chu_`;
+    partes.push(msg);
+
+    if (partes.length === 1) return partes[0];
+    return { tipo: 'mensajes', partes };
   } catch (e) {
     console.error('Error gastos:', e.message);
     return '❌ No pude consultar los gastos.';

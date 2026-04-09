@@ -798,17 +798,49 @@ async function extraerGastos(page, fechaInicial, fechaFinal) {
     return rows;
   });
 
-  const gastos = [];
-  for (const fila of filas) {
-    if (!fila[0] || fila[0] === 'Concepto' || fila[0] === 'Total') continue;
-    gastos.push({
-      concepto: fila[0],
-      detalle: fila[1] || '',
-      tercero: fila[2] || '',
-      fecha: fila[3] || '',
-      valor: parsearMonto(fila[4]),
+  // Detectar fila de encabezados para mapear columnas dinámicamente
+  let iConcepto = 0, iDetalle = 1, iTercero = 2, iFecha = 3, iValor = 4;
+  const headerRow = filas.find(f =>
+    f.some(c => c.toLowerCase().includes('concepto') || c.toLowerCase().includes('gasto'))
+  );
+  if (headerRow) {
+    console.log('📋 Columnas gastos:', headerRow.join(' | '));
+    headerRow.forEach((col, i) => {
+      const c = col.toLowerCase();
+      if (c.includes('concepto') || c.includes('gasto'))   iConcepto = i;
+      else if (c.includes('detalle') || c.includes('desc')) iDetalle  = i;
+      else if (c.includes('tercero') || c.includes('prov')) iTercero  = i;
+      else if (c.includes('fecha'))                          iFecha    = i;
+      else if (c.includes('valor') || c.includes('total') || c.includes('monto')) iValor = i;
     });
   }
+
+  const gastos = [];
+  for (const fila of filas) {
+    if (!fila[iConcepto]) continue;
+    const concepto = fila[iConcepto];
+    if (concepto === 'Concepto' || concepto === 'Total' || concepto === 'Gasto') continue;
+
+    // Intentar parsear valor desde la columna detectada y como fallback buscar en toda la fila
+    let valor = parsearMonto(fila[iValor] || '');
+    if (!valor) {
+      // Buscar en todas las celdas el primer número que parezca un valor monetario
+      for (const cell of fila) {
+        const v = parsearMonto(cell);
+        if (v > 100) { valor = v; break; }
+      }
+    }
+
+    gastos.push({
+      concepto,
+      detalle: fila[iDetalle] || '',
+      tercero: fila[iTercero] || '',
+      fecha:   fila[iFecha]   || '',
+      valor,
+    });
+  }
+
+  console.log(`💸 ${gastos.length} gastos extraídos. Ejemplo:`, gastos[0]);
   return gastos;
 }
 
