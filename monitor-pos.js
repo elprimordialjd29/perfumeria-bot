@@ -1359,6 +1359,82 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
   }
 }
 
+/**
+ * Extrae facturas del día usando una página POS ya logueada (pos.vectorpos.com.co).
+ * Navega a Vender → Lista facturas dentro de la misma sesión — sin abrir nuevo browser.
+ * Con incluirDetalle=true abre cada factura para leer items exactos y descuentos.
+ *
+ * @param {import('puppeteer').Page} page  Página ya autenticada en pos.vectorpos.com.co
+ * @param {string} fecha  'YYYY-MM-DD'
+ * @param {boolean} incluirDetalle
+ * @returns {Promise<Array>}
+ */
+async function extraerFacturasConSesion(page, fecha, incluirDetalle = false) {
+  const parseNum = (s) => parseInt(String(s || '0').replace(/\./g, '').replace(/[^0-9]/g, '')) || 0;
+  const navC = async (textos) => await page.evaluate(
+    (lista, fnSrc) => eval(fnSrc)(lista), textos, _JS_FIND_AND_CLICK
+  );
+
+  try {
+    // Intentar "Lista facturas" directamente (sidebar puede ya estar visible)
+    let ok = await navC(['Lista facturas', 'Lista Facturas', 'LISTA FACTURAS']);
+    if (!ok) {
+      // Ir a "Vender" primero
+      await navC(['Vender', 'VENDER', 'vender']);
+      await new Promise(r => setTimeout(r, 2000));
+      ok = await navC(['Lista facturas', 'Lista Facturas', 'LISTA FACTURAS']);
+    }
+    if (!ok) {
+      console.log('⚠️ extraerFacturasConSesion: no encontró "Lista facturas"');
+      return [];
+    }
+    console.log('✅ extraerFacturasConSesion: navegó a Lista Facturas');
+
+    // Esperar tabla
+    try {
+      await page.waitForFunction(
+        () => document.querySelectorAll('table tbody tr').length > 0,
+        { timeout: 8000 }
+      );
+    } catch(e) { console.log('⚠️ extraerFacturasConSesion: tabla tardó en cargar'); }
+    await new Promise(r => setTimeout(r, 500));
+
+    // Leer tabla
+    // Cols: Estado(0) Factura(1) Mesa(2) Venta(3) Propina(4) Domicilio(5)
+    //       Total(6)  EstadoDIAN(7)  Hora(8)  Plataforma(9) ... Cajero(11)
+    const filas = await page.evaluate(() => {
+      const rows = [];
+      document.querySelectorAll('table tbody tr').forEach(tr => {
+        const cells = [...tr.querySelectorAll('td')]
+          .map(td => td.innerText.trim().replace(/\s+/g, ' '));
+        if (cells.length >= 7 && /^\d+$/.test(cells[1])) rows.push(cells);
+      });
+      return rows;
+    });
+
+    const facturasList = filas.map(cells => ({
+      factura:   cells[1],
+      mesa:      cells[2] || '',
+      venta:     parseNum(cells[3]),
+      total:     parseNum(cells[6]),
+      descuento: 0,
+      fecha,
+      hora:      cells[8] || cells[7] || '',
+    }));
+
+    console.log(`📄 Lista Facturas (sesión POS): ${facturasList.length} facturas`);
+
+    if (incluirDetalle && facturasList.length > 0 && facturasList.length <= 30) {
+      await _scrapeDetallesFacturas(page, facturasList);
+    }
+
+    return facturasList;
+  } catch(e) {
+    console.error('❌ Error extraerFacturasConSesion:', e.message);
+    return [];
+  }
+}
+
 module.exports = {
   monitorearVentasDiarias,
   generarMensajeMeta,
@@ -1384,4 +1460,5 @@ module.exports = {
   getUmbral: _getUmbral,
   obtenerCategoriaProductos,
   extraerHistoricoFacturas,
+  extraerFacturasConSesion,
 };

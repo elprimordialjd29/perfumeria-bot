@@ -768,7 +768,7 @@ async function reporteGeneral() {
       });
     }
 
-    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `\n─────────────────\n🤖 _VectorPOS Bot_`;
 
     // Inventario bajo — todos, dividido en partes separadas
     const partesMsgs = [msg];
@@ -892,7 +892,13 @@ async function reporteSemana() {
  * @returns {Array} [{nombre, cantidad, valorProd, valorServicio, descuento, valorNeto}]
  */
 function procesarFacturasParaProductos(facturas) {
-  const esServ = (n) => /(preparac|recarga)/i.test(n);
+  // "RECARGA" sola = servicio de llenado; "RECARGA SHANTAL 33gr..." = producto vendido
+  const esServ = (n) => {
+    const s = (n || '').trim().toLowerCase();
+    if (/^preparac|^prep\b/.test(s)) return true;
+    if (/^recarga(\s+\d|\s*$)/.test(s)) return true;
+    return false;
+  };
   const mapa = {};
 
   facturas.forEach(factura => {
@@ -930,25 +936,26 @@ async function reporteRango(desde, hasta, titulo) {
   const tituloFinal = titulo || `${desde} al ${hasta}`;
   const esDiaUnico  = desde === hasta;
   try {
-    // Correr sesión POS e histórico de facturas en paralelo
-    const [posData, facturas] = await Promise.all([
-      (async () => {
-        const { browser, page } = await monitor.crearSesionPOS();
-        const ventas    = await monitor.extraerVentasGenerales(page, desde, hasta);
-        const cajeros   = await monitor.extraerVentasCajero(page, desde, hasta);
-        const prodRaw   = await monitor.extraerVentasProducto(page, desde, hasta);
-        const horasData = await monitor.extraerVentasPorHora(page, desde, hasta);
-        await browser.close();
-        return { ventas, cajeros, prodRaw, horasData };
-      })(),
-      monitor.extraerHistoricoFacturas(desde, hasta, esDiaUnico)
-        .catch(e => { console.error('⚠️ Histórico facturas:', e.message); return []; }),
-    ]);
+    // Una sola sesión POS — facturas se obtienen con el mismo page antes de cerrar
+    const { browser: br1, page: pg1 } = await monitor.crearSesionPOS();
+    const ventas    = await monitor.extraerVentasGenerales(pg1, desde, hasta);
+    const cajeros   = await monitor.extraerVentasCajero(pg1, desde, hasta);
+    const prodRaw   = await monitor.extraerVentasProducto(pg1, desde, hasta);
+    const horasData = await monitor.extraerVentasPorHora(pg1, desde, hasta);
+    // Facturas con detalle solo para día único — misma sesión, no abre otro browser
+    const facturas = esDiaUnico
+      ? await monitor.extraerFacturasConSesion(pg1, desde, true)
+          .catch(e => { console.error('⚠️ Facturas sesión:', e.message); return []; })
+      : [];
+    await br1.close();
 
-    const { ventas, cajeros, prodRaw, horasData } = posData;
-
-    // Preparación y recarga = servicio de llenado, no productos físicos
-    const esServicio = (nombre) => /(preparac|recarga)/i.test(nombre);
+    // "RECARGA" sola = servicio de llenado; "RECARGA SHANTAL 33gr..." = producto vendido
+    const esServicio = (nombre) => {
+      const s = (nombre || '').trim().toLowerCase();
+      if (/^preparac|^prep\b/.test(s)) return true;
+      if (/^recarga(\s+\d|\s*$)/.test(s)) return true;
+      return false;
+    };
     const preparaciones      = prodRaw.filter(p => esServicio(p.nombre));
     const totalPreparaciones = preparaciones.reduce((s, p) => s + (p.valor || 0), 0);
 
@@ -1033,24 +1040,15 @@ async function reporteRango(desde, hasta, titulo) {
           const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
           sumaTotal += p.valorNeto;
 
-          let detalle;
-          if (p.valorServicio > 0 && p.descuento > 0) {
-            detalle = ` ($${fp2(p.valorProd)} + $${fp2(p.valorServicio)} srv - $${fp2(p.descuento)} desc) = *$${fp2(p.valorNeto)}*`;
-          } else if (p.valorServicio > 0) {
-            detalle = ` ($${fp2(p.valorProd)} + $${fp2(p.valorServicio)} srv) = *$${fp2(p.valorNeto)}*`;
-          } else if (p.descuento > 0) {
-            detalle = ` ($${fp2(p.valorProd)} - $${fp2(p.descuento)} desc) = *$${fp2(p.valorNeto)}*`;
-          } else {
-            detalle = ` — $${fp2(p.valorProd)}`;
-          }
-          msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}${detalle}\n`;
+          const descInfo = p.descuento > 0 ? ` _(desc -$${fp2(p.descuento)})_` : '';
+          msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni} — *$${fp2(p.valorNeto)}*${descInfo}\n`;
         });
         msg += `_Total: $${fp2(sumaTotal)}_\n`;
       }
     }
 
     msg += bloquesMeta(total, desde, hasta);
-    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `\n─────────────────\n🤖 _VectorPOS Bot_`;
     return msg;
   } catch (e) {
     console.error('Error reporte rango:', e.message);
@@ -1095,7 +1093,7 @@ async function reporteCajeroIndividual(nombre, desde, hasta, titulo) {
     if (encontrado.nequi > 0)       msg += `\n📱 Nequi: $${encontrado.nequi.toLocaleString('es-CO')}`;
     msg += `\n`;
     msg += bloquesMeta(encontrado.total, desde, hasta);
-    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `─────────────────\n🤖 _VectorPOS Bot_`;
     return msg;
   } catch (e) {
     console.error('Error cajero individual:', e.message);
@@ -1158,7 +1156,7 @@ async function reporteRankingPOS(desde, hasta, titulo) {
 
     msg += `💵 *Total: $${totalGeneral.toLocaleString('es-CO')}*\n`;
     msg += bloquesMeta(totalGeneral, desde, hasta);
-    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `─────────────────\n🤖 _VectorPOS Bot_`;
     return msg;
   } catch (e) {
     console.error('Error ranking:', e.message);
@@ -1431,8 +1429,9 @@ async function reporteProductos(desde, hasta, titulo) {
     const fp = monitor.formatPesos;
     const icons = ['🥇','🥈','🥉','4️⃣','5️⃣'];
 
-    // 1. Excluir PREPARACIÓN/RECARGA (mano de obra, no producto real)
-    const productos = raw.filter(p => !/(preparac|recarga)/i.test(p.nombre));
+    // 1. Excluir PREPARACIÓN/RECARGA sola (mano de obra); "RECARGA [marca]" = producto real
+    const _esSrvInv = (n) => { const s=(n||'').trim().toLowerCase(); return /^preparac|^prep\b/.test(s) || /^recarga(\s+\d|\s*$)/.test(s); };
+    const productos = raw.filter(p => !_esSrvInv(p.nombre));
 
     // 2. Resolver categoría: catálogo VectorPOS primero, luego inferir
     const resolverCategoria = (nombre) => {
@@ -1507,7 +1506,7 @@ async function reporteProductos(desde, hasta, titulo) {
       msg += `• *${p.nombre}*: ${p.cantidad} ${uni} — $${fp(p.valor)} (~$${fp(precioUnd)}/${uni === 'gr' ? 'g' : 'u'})\n`;
     });
 
-    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `\n─────────────────\n🤖 _VectorPOS Bot_`;
     partes.push(msg);
 
     if (partes.length === 1) return partes[0];
@@ -1570,7 +1569,7 @@ async function reporteMediosPago(desde, hasta, titulo) {
     msg += `🏦 *Transferencias:* $${transferencias.toLocaleString('es-CO')} (${pctTransf}%)\n`;
     if (totales.bancolombia > 0) msg += `   • Bancolombia: $${totales.bancolombia.toLocaleString('es-CO')}\n`;
     if (totales.nequi > 0)       msg += `   • Nequi: $${totales.nequi.toLocaleString('es-CO')}\n`;
-    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `\n─────────────────\n🤖 _VectorPOS Bot_`;
     return msg;
   } catch(e) {
     return '❌ No pude consultar los medios de pago.';
@@ -1604,7 +1603,7 @@ async function reporteQuienTrabajo() {
       msg += `   💵 Efectivo: $${(c.efectivo||0).toLocaleString('es-CO')} | 🏦 Transfer: $${((c.bancolombia||0)+(c.nequi||0)).toLocaleString('es-CO')}\n\n`;
     });
 
-    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `─────────────────\n🤖 _VectorPOS Bot_`;
     return msg;
   } catch(e) {
     return '❌ No pude consultar quién trabajó hoy.';
@@ -1664,7 +1663,7 @@ async function reporteGastos(desde, hasta, titulo) {
 
     msg += `─────────────────\n`;
     msg += `💰 *TOTAL GASTOS: $${fp(totalGastos)}*\n`;
-    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `─────────────────\n🤖 _VectorPOS Bot_`;
     partes.push(msg);
 
     if (partes.length === 1) return partes[0];
@@ -1690,27 +1689,30 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
 
     const esDiaUnico = desde === hasta;
 
-    const [posData, facturas] = await Promise.all([
-      (async () => {
-        const { browser, page } = await monitor.crearSesionPOS();
-        const cierres = await monitor.extraerCierresCaja(page, desde, hasta);
-        const cajerosRango = await monitor.extraerVentasCajero(page, desde, hasta);
-        const cajerosHoy = desde === hasta && desde === hoy
-          ? cajerosRango
-          : await monitor.extraerVentasCajero(page, hoy, hoy);
-        const productosRaw = await monitor.extraerVentasProducto(page, desde, hasta);
-        const ventasHora   = await monitor.extraerVentasPorHora(page, desde, hasta);
-        await browser.close();
-        return { cierres, cajerosRango, cajerosHoy, productosRaw, ventasHora };
-      })(),
-      monitor.extraerHistoricoFacturas(desde, hasta, esDiaUnico)
-        .catch(e => { console.error('⚠️ Histórico facturas caja:', e.message); return []; }),
-    ]);
-
-    const { cierres, cajerosRango, cajerosHoy, productosRaw, ventasHora } = posData;
+    // Una sola sesión POS — facturas se obtienen con el mismo page antes de cerrar
+    const { browser: br2, page: pg2 } = await monitor.crearSesionPOS();
+    const cierres      = await monitor.extraerCierresCaja(pg2, desde, hasta);
+    const cajerosRango = await monitor.extraerVentasCajero(pg2, desde, hasta);
+    const cajerosHoy   = desde === hasta && desde === hoy
+      ? cajerosRango
+      : await monitor.extraerVentasCajero(pg2, hoy, hoy);
+    const productosRaw = await monitor.extraerVentasProducto(pg2, desde, hasta);
+    const ventasHora   = await monitor.extraerVentasPorHora(pg2, desde, hasta);
+    // Facturas con detalle solo para día único — misma sesión, no abre otro browser
+    const facturas = esDiaUnico
+      ? await monitor.extraerFacturasConSesion(pg2, desde, true)
+          .catch(e => { console.error('⚠️ Facturas sesión caja:', e.message); return []; })
+      : [];
+    await br2.close();
     const totalDescFacturas = facturas.reduce((s, f) => s + (f.descuento || 0), 0);
 
-    const esServicioCaja = (n) => /(preparac|recarga)/i.test(n);
+    // "RECARGA" sola = servicio; "RECARGA SHANTAL 33gr..." = producto
+    const esServicioCaja = (n) => {
+      const s = (n || '').trim().toLowerCase();
+      if (/^preparac|^prep\b/.test(s)) return true;
+      if (/^recarga(\s+\d|\s*$)/.test(s)) return true;
+      return false;
+    };
     const productos = productosRaw
       .filter(p => !esServicioCaja(p.nombre))
       .sort((a, b) => b.cantidad - a.cantidad)
@@ -1850,22 +1852,13 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
           prods.forEach((p, i) => {
             const cat = monitor.inferirCategoria(p.nombre);
             const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-            let detalle;
-            if (p.valorServicio > 0 && p.descuento > 0) {
-              detalle = ` ($${fp(p.valorProd)} + $${fp(p.valorServicio)} srv - $${fp(p.descuento)} desc) = *$${fp(p.valorNeto)}*`;
-            } else if (p.valorServicio > 0) {
-              detalle = ` ($${fp(p.valorProd)} + $${fp(p.valorServicio)} srv) = *$${fp(p.valorNeto)}*`;
-            } else if (p.descuento > 0) {
-              detalle = ` ($${fp(p.valorProd)} - $${fp(p.descuento)} desc) = *$${fp(p.valorNeto)}*`;
-            } else {
-              detalle = ` — $${fp(p.valorProd)}`;
-            }
-            msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}${detalle}\n`;
+            const descInfo = p.descuento > 0 ? ` _(desc -$${fp(p.descuento)})_` : '';
+            msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni} — *$${fp(p.valorNeto)}*${descInfo}\n`;
           });
         }
       } else if (productos.length > 0) {
         // Fallback: mostrar productos con distribución proporcional de servicios
-        const esServicioCaja2 = (n) => /(preparac|recarga)/i.test(n);
+        const esServicioCaja2 = (n) => { const s=(n||'').trim().toLowerCase(); return /^preparac|^prep\b/.test(s) || /^recarga(\s+\d|\s*$)/.test(s); };
         const preparacionesTotal = productosRaw.filter(p => esServicioCaja2(p.nombre))
                                                .reduce((s, p) => s + (p.valor || 0), 0);
         const sumaProd = productos.reduce((s, p) => s + (p.valor || 0), 0);
@@ -1877,15 +1870,12 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
           const srvProp = sumaProd > 0 && preparacionesTotal > 0
             ? Math.round((p.valor / sumaProd) * preparacionesTotal) : 0;
           const valorTotal = (p.valor || 0) + srvProp;
-          const detalle = srvProp > 0
-            ? ` ($${fp(p.valor)} + $${fp(srvProp)} srv) = *$${fp(valorTotal)}*`
-            : ` — $${fp(p.valor)}`;
-          msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}${detalle}\n`;
+          msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni} — *$${fp(valorTotal)}*\n`;
         });
       }
     }
 
-    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `\n─────────────────\n🤖 _VectorPOS Bot_`;
     partes.push(msg);
 
     if (partes.length === 1) return partes[0];
@@ -1923,7 +1913,7 @@ async function reporteVentasPorHora(desde, hasta, titulo) {
     });
 
     msg += `\n💰 Total: $${total.toLocaleString('es-CO')}`;
-    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `\n─────────────────\n🤖 _VectorPOS Bot_`;
     return msg;
   } catch (e) {
     console.error('Error ventas hora:', e.message);
@@ -1973,7 +1963,7 @@ async function reporteInventarioTodo() {
       msg += `\n`;
     }
 
-    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `─────────────────\n🤖 _VectorPOS Bot_`;
     partes.push(msg);
 
     if (partes.length === 1) return partes[0];
@@ -2046,7 +2036,7 @@ async function reporteInventarioCategoria(categoria) {
       });
     }
     if (umbral.restock && totalRestock > 0) parte += `\n💰 *Inversión estimada: $${fp(totalRestock)}*\n`;
-    parte += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    parte += `─────────────────\n🤖 _VectorPOS Bot_`;
     partes.push(parte);
 
     if (partes.length === 1) return partes[0];
@@ -2162,7 +2152,7 @@ async function reporteRestock(soloAgotados = true) {
       });
       pie += `\n💰 *INVERSIÓN TOTAL: $${fp(totalRestock)}*\n`;
     }
-    pie += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    pie += `─────────────────\n🤖 _VectorPOS Bot_`;
     parteActual += pie;
     partes.push(parteActual);
 
@@ -2233,7 +2223,7 @@ async function reporteVentasVsInventario() {
     const encabezado = `📦 *VENTAS VS INVENTARIO — ${mes.toUpperCase()}*\n_${monitor.fechaInicioMes()} → ${monitor.fechaHoy()}_\n_(${items.length} productos)_\n\n`;
     let pie = `\n💰 *Total vendido: $${totalVendido.toLocaleString('es-CO')}*\n`;
     if (totalStockVal > 0) pie += `🏦 Valor total en stock: $${totalStockVal.toLocaleString('es-CO')}\n`;
-    pie += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    pie += `─────────────────\n🤖 _VectorPOS Bot_`;
 
     const partes = [];
     let parteActual = encabezado;
@@ -2306,7 +2296,7 @@ async function cruzarProductoRango(query, desde, hasta) {
       msg += '\n';
     });
 
-    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `─────────────────\n🤖 _VectorPOS Bot_`;
     return msg;
   } catch(e) {
     console.error('Error cruce producto rango:', e.message);
@@ -2397,7 +2387,7 @@ async function cruzarProducto(query) {
       msg += '\n';
     });
 
-    msg += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msg += `─────────────────\n🤖 _VectorPOS Bot_`;
     return msg;
 
   } catch(e) {
