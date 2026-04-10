@@ -1291,7 +1291,15 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
     console.log(`📌 Inputs fecha encontrados: ${inputsCount}, valores: ${fechaInicial} → ${fechaFinal}`);
 
     // ── Click Cargar ──────────────────────────────────────────────────────────
-    const cargarClic = await page.evaluate((fnSrc) => eval(fnSrc)(['Cargar', 'CARGAR', 'cargar']), _JS_FIND_AND_CLICK);
+    // Primero probar selector directo (#btnCargar es el patrón VectorPOS)
+    const cargarClic = await page.evaluate((fnSrc) => {
+      const byId = document.querySelector('#btnCargar, #btnBuscar, [id*="argar"]');
+      if (byId) { byId.click(); return 'id:' + byId.id; }
+      const byText = [...document.querySelectorAll('button, input[type="submit"], a.btn')]
+        .find(b => (b.innerText || b.value || '').trim().toLowerCase().includes('cargar'));
+      if (byText) { byText.click(); return 'text'; }
+      return eval(fnSrc)(['Cargar', 'CARGAR', 'Buscar']);
+    }, _JS_FIND_AND_CLICK);
     console.log(`📌 Click Cargar: ${cargarClic}`);
     await new Promise(r => setTimeout(r, 4000));
 
@@ -1306,22 +1314,25 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
       return rows;
     });
 
-    const facturasList = filas.map(cells => {
-      const fh = cells[7] || '';  // "2026-04-09 10:42:44"
-      return {
-        factura:   cells[1],
-        mesa:      cells[2] || '',
-        venta:     parseNum(cells[3]),
-        total:     parseNum(cells[6]),
-        descuento: 0,
-        fecha:     fh.split(' ')[0] || fechaInicial,
-        hora:      fh.split(' ')[1] || '',
-      };
-    });
+    // Mapear y filtrar por fecha (por si Cargar no aplicó el filtro)
+    const facturasList = filas
+      .map(cells => {
+        const fh = cells[7] || '';  // "2026-04-09 10:42:44"
+        return {
+          factura:   cells[1],
+          mesa:      cells[2] || '',
+          venta:     parseNum(cells[3]),
+          total:     parseNum(cells[6]),
+          descuento: 0,
+          fecha:     fh.split(' ')[0] || fechaInicial,
+          hora:      fh.split(' ')[1] || '',
+        };
+      })
+      .filter(f => f.fecha >= fechaInicial && f.fecha <= fechaFinal);
 
     console.log(`📄 Historico Ventas: ${facturasList.length} facturas (${fechaInicial}→${fechaFinal})`);
 
-    if (incluirDetalle && facturasList.length > 0 && facturasList.length <= 30) {
+    if (incluirDetalle && facturasList.length > 0 && facturasList.length <= 50) {
       await _scrapeDetallesFacturas(page, facturasList);
     }
 
