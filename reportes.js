@@ -488,9 +488,9 @@ async function detectarNuevaVenta() {
     const productos = await monitor.extraerVentasProducto(page, hoy, hoy);
     await browser.close();
 
+    const esSrv = (n) => { const s=(n||'').trim().toLowerCase(); return /^preparac|^prep\b/.test(s) || /^recarga(\s+\d|\s*$)/.test(s); };
     const totalCajeros = cajeros.reduce((s, c) => s + c.total, 0);
-    const totalProds   = productos.filter(p => !(p.nombre||'').toLowerCase().match(/(preparac|recarga)/i))
-                                   .reduce((s, p) => s + (p.valor || 0), 0);
+    const totalProds   = productos.filter(p => !esSrv(p.nombre)).reduce((s, p) => s + (p.valor || 0), 0);
     const totalActual  = totalCajeros > 0 ? totalCajeros : totalProds;
 
     if (totalActual <= ultimoTotalConocido) return; // sin cambios
@@ -514,9 +514,7 @@ async function detectarNuevaVenta() {
     const progreso   = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
 
     // Últimos productos vendidos
-    const ultimos = productos
-      .filter(p => !(p.nombre||'').toLowerCase().match(/(preparac|recarga)/i))
-      .slice(0, 3);
+    const ultimos = productos.filter(p => !esSrv(p.nombre)).slice(0, 3);
 
     let msg = `🛍️ *NUEVA VENTA — ${hoy}*\n\n`;
     msg += `💰 *+$${fp(nuevaVenta)}*\n`;
