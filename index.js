@@ -20,7 +20,7 @@ const monitor = require('./monitor-pos');
 // ──────────────────────────────────────────────
 
 const errores = [];
-if (!process.env.GROQ_API_KEY)   errores.push('GROQ_API_KEY');
+// GROQ_API_KEY es opcional (fallback de Claude)
 if (!process.env.SUPABASE_URL)   errores.push('SUPABASE_URL');
 if (!process.env.SUPABASE_KEY)   errores.push('SUPABASE_KEY');
 if (!process.env.VECTORPOS_USER) errores.push('VECTORPOS_USER');
