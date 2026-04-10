@@ -530,7 +530,8 @@ async function detectarNuevaVenta() {
 
     let msg = `🛍️ *NUEVA VENTA — ${hoy}*\n\n`;
     msg += `💰 *+$${fp(nuevaVenta)}*\n`;
-    msg += `📊 Total del día: *$${fp(totalActual)}*\n`;
+    msg += `📊 Total del día: *$${fp(ultimoTotalConocido)}*\n`;
+    msg += `📈 Total con esta venta: *$${fp(totalActual)}*\n`;
     if (efectivo > 0) msg += `💵 Efectivo: $${fp(efectivo)}\n`;
     if (banco > 0)    msg += `🏦 Transferencia: $${fp(banco)}\n`;
     if (nequi > 0)    msg += `📱 Nequi: $${fp(nequi)}\n`;
