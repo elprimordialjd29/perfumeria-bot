@@ -494,9 +494,11 @@ async function detectarNuevaVenta() {
 
     const esSrv = (n) => { const s=(n||'').trim().toLowerCase(); return /^preparac|^prep\b/.test(s) || /^recarga(\s+\d|\s*$)/.test(s); };
     const esConsumible = (n) => /^alcohol\b/i.test((n||'').trim()); // alcohol = consumible, no producto
-    const totalCajeros = cajeros.reduce((s, c) => s + c.total, 0);
-    const totalProds   = productos.filter(p => !esSrv(p.nombre)).reduce((s, p) => s + (p.valor || 0), 0);
-    const totalActual  = totalCajeros > 0 ? totalCajeros : totalProds;
+    // productos (ventas/producto) incluye TODO: productos + preparaciones + alcohol → total real
+    // cajeros excluye servicios (da valor menor al real)
+    const totalTodosProds = productos.reduce((s, p) => s + (p.valor || 0), 0);
+    const totalCajeros    = cajeros.reduce((s, c) => s + c.total, 0);
+    const totalActual     = totalTodosProds > 0 ? totalTodosProds : totalCajeros;
 
     console.log(`🛍️ Detector venta: actual=$${totalActual} vs último=$${ultimoTotalConocido} (fecha: ${ultimaFecha}→${hoy})`);
 
