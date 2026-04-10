@@ -1699,6 +1699,7 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
     // POS primero — cerrar antes de abrir app.vectorpos.com.co (un browser a la vez)
     const { browser: br2, page: pg2 } = await monitor.crearSesionPOS();
     const cierres      = await monitor.extraerCierresCaja(pg2, desde, hasta);
+    const ventasGen    = await monitor.extraerVentasGenerales(pg2, desde, hasta);
     const cajerosRango = await monitor.extraerVentasCajero(pg2, desde, hasta);
     const cajerosHoy   = desde === hasta && desde === hoy
       ? cajerosRango
@@ -1760,13 +1761,19 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
       const esHoy = fecha === hoy;
       msg += `📅 *${esHoy ? 'HOY' : fecha} — ${fecha}*\n\n`;
 
-      // Total real: facturas (incluye preparaciones+alcohol) > cajeros POS (los excluye) > productos
-      const totalFacturas = facturas.reduce((s, f) => s + (f.total || f.venta || 0), 0);
-      const totalCajeros  = cajerosF.reduce((s, c) => s + c.total, 0);
-      const totalProds    = productos.reduce((s, p) => s + (p.valor || 0), 0);
-      const totalReal     = totalFacturas > 0 ? totalFacturas
-                          : totalCajeros  > 0 ? totalCajeros
-                          : totalProds;
+      // Total real (prioridad):
+      // 1. ventas/general del POS → incluye preparaciones+alcohol, es el total definitivo
+      // 2. suma de facturas disponibles
+      // 3. cajeros (excluye servicios — puede ser menor al real)
+      // 4. productos (último recurso)
+      const totalVentasGen  = ventasGen.filter(v => v.fecha === fecha).reduce((s, v) => s + v.totalVentas, 0);
+      const totalFacturas   = facturas.reduce((s, f) => s + (f.total || f.venta || 0), 0);
+      const totalCajeros    = cajerosF.reduce((s, c) => s + c.total, 0);
+      const totalProds      = productos.reduce((s, p) => s + (p.valor || 0), 0);
+      const totalReal       = totalVentasGen > 0 ? totalVentasGen
+                            : totalFacturas  > 0 ? totalFacturas
+                            : totalCajeros   > 0 ? totalCajeros
+                            : totalProds;
       const efectivoF    = cajerosF.reduce((s, c) => s + (c.efectivo    || 0), 0);
       const bancoF       = cajerosF.reduce((s, c) => s + (c.bancolombia || 0), 0);
       const nequiF       = cajerosF.reduce((s, c) => s + (c.nequi       || 0), 0);
