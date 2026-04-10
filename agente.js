@@ -979,7 +979,12 @@ async function reporteRango(desde, hasta, titulo) {
     const ticketsDeVentas  = ventas.reduce((s, v)  => s + v.tickets,     0);
     const totalDeProductos = prodRaw.reduce((s, p) => s + p.valor, 0);
 
-    const total   = totalDeCajeros   > 0 ? totalDeCajeros   : totalDeVentas   > 0 ? totalDeVentas   : totalDeProductos;
+    // Facturas incluyen preparaciones+alcohol → total más fiel que el del POS
+    const totalDeFacturas = facturas.reduce((s, f) => s + (f.total || f.venta || 0), 0);
+    const total   = totalDeFacturas  > 0 ? totalDeFacturas
+                  : totalDeCajeros   > 0 ? totalDeCajeros
+                  : totalDeVentas    > 0 ? totalDeVentas
+                  : totalDeProductos;
     const tickets = ticketsDeCajeros > 0 ? ticketsDeCajeros : ticketsDeVentas > 0 ? ticketsDeVentas : 0;
     const haySales = total > 0;
     const medallas = ['🥇', '🥈', '🥉'];
@@ -1755,10 +1760,13 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
       const esHoy = fecha === hoy;
       msg += `📅 *${esHoy ? 'HOY' : fecha} — ${fecha}*\n\n`;
 
-      // Total real: cajeros si hay, sino suma de productos
-      const totalCajeros = cajerosF.reduce((s, c) => s + c.total, 0);
-      const totalProds   = productos.reduce((s, p) => s + (p.valor || 0), 0);
-      const totalReal    = totalCajeros > 0 ? totalCajeros : totalProds;
+      // Total real: facturas (incluye preparaciones+alcohol) > cajeros POS (los excluye) > productos
+      const totalFacturas = facturas.reduce((s, f) => s + (f.total || f.venta || 0), 0);
+      const totalCajeros  = cajerosF.reduce((s, c) => s + c.total, 0);
+      const totalProds    = productos.reduce((s, p) => s + (p.valor || 0), 0);
+      const totalReal     = totalFacturas > 0 ? totalFacturas
+                          : totalCajeros  > 0 ? totalCajeros
+                          : totalProds;
       const efectivoF    = cajerosF.reduce((s, c) => s + (c.efectivo    || 0), 0);
       const bancoF       = cajerosF.reduce((s, c) => s + (c.bancolombia || 0), 0);
       const nequiF       = cajerosF.reduce((s, c) => s + (c.nequi       || 0), 0);
