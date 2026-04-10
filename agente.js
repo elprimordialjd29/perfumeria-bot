@@ -1041,16 +1041,11 @@ async function reporteRango(desde, hasta, titulo) {
       if (productosAMostrar.length > 0) {
         const medallas2 = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
         msg += `\n📦 *Productos vendidos:*\n`;
-        let sumaTotal = 0;
         productosAMostrar.forEach((p, i) => {
           const cat = monitor.inferirCategoria(p.nombre);
           const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-          sumaTotal += p.valorNeto;
-
-          const descInfo = p.descuento > 0 ? ` _(desc -$${fp2(p.descuento)})_` : '';
-          msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni} — *$${fp2(p.valorNeto)}*${descInfo}\n`;
+          msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}\n`;
         });
-        msg += `_Total: $${fp2(sumaTotal)}_\n`;
       }
     }
 
@@ -1871,8 +1866,7 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
           prods.forEach((p, i) => {
             const cat = monitor.inferirCategoria(p.nombre);
             const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-            const descInfo = p.descuento > 0 ? ` _(desc -$${fp(p.descuento)})_` : '';
-            msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni} — *$${fp(p.valorNeto)}*${descInfo}\n`;
+            msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}\n`;
           });
         }
       } else if (productos.length > 0) {
@@ -1886,10 +1880,7 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
         productos.forEach((p, i) => {
           const cat = monitor.inferirCategoria(p.nombre);
           const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-          const srvProp = sumaProd > 0 && preparacionesTotal > 0
-            ? Math.round((p.valor / sumaProd) * preparacionesTotal) : 0;
-          const valorTotal = (p.valor || 0) + srvProp;
-          msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni} — *$${fp(valorTotal)}*\n`;
+          msg += `${medallas[i]} *${p.nombre}*: ${p.cantidad} ${uni}\n`;
         });
       }
     }
