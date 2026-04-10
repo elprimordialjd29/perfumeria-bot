@@ -1183,17 +1183,18 @@ async function _scrapeDetallesFacturas(page, facturasList) {
  *
  * @returns {Promise<Array>} [{factura, fecha, hora, venta, total, descuento, items?, medioPago?}]
  */
+/**
+ * Extrae facturas con items desde app.vectorpos.com.co → Caja → Historico Ventas.
+ * Aplica filtro de fecha (Fecha Inicial / Fecha Final) y hace clic en Cargar.
+ * Tabla: Estado(0) Factura(1) Mesa(2) Venta(3) Propina(4) Domicilio(5)
+ *        Total(6) Fecha(7 "YYYY-MM-DD HH:MM:SS") EstadoDIAN(8) ...
+ * Con incluirDetalle=true abre cada modal para leer items exactos y descuento.
+ */
 async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle = false) {
   const user = process.env.VECTORPOS_USER;
   const pass = process.env.VECTORPOS_PASS;
-  const hoy  = fechaEnColombia(0);
   let browser = null;
-  const parseNum = (s) => parseInt(String(s||'0').replace(/\./g,'').replace(/[^0-9]/g,'')) || 0;
-
-  // Helper: navegar por TreeWalker (pasa _JS_FIND_AND_CLICK como argumento)
-  const navClick = async (textos) => {
-    return await page.evaluate((lista, fnSrc) => eval(fnSrc)(lista), textos, _JS_FIND_AND_CLICK);
-  };
+  const parseNum = (s) => parseInt(String(s || '0').replace(/\./g, '').replace(/[^0-9]/g, '')) || 0;
 
   try {
     browser = await puppeteer.launch({
@@ -1204,105 +1205,28 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
     await _loginApp(page, user, pass);
 
-    // Helper local que captura 'page'
     const navC = async (textos) => await page.evaluate(
       (lista, fnSrc) => eval(fnSrc)(lista), textos, _JS_FIND_AND_CLICK
     );
 
-    // ══════════════════════════════════════════════════════
-    // RUTA A: HOY → Lista Facturas  (Vender → sidebar)
-    // ══════════════════════════════════════════════════════
-    if (fechaInicial === hoy && fechaFinal === hoy) {
+    // ── Navegar: Caja → Historico Ventas ──────────────────────────────────────
+    await navC(['Caja', 'CAJA']);
+    await new Promise(r => setTimeout(r, 1200));
 
-      // Intentar encontrar "Lista facturas" directamente (puede ya estar visible)
-      let ok = await navC(['Lista facturas', 'Lista Facturas', 'LISTA FACTURAS']);
-      if (!ok) {
-        // Primero ir a "Vender"
-        await navC(['Vender', 'VENDER', 'vender']);
-        await new Promise(r => setTimeout(r, 2000));
-        ok = await navC(['Lista facturas', 'Lista Facturas', 'LISTA FACTURAS']);
-      }
-
-      if (!ok) {
-        console.log('⚠️ No se encontró "Lista facturas"');
-        await browser.close();
-        return [];
-      }
-      console.log('✅ Navegó a Lista Facturas');
-
-      // Esperar a que cargue la tabla
-      try {
-        await page.waitForFunction(
-          () => document.querySelectorAll('table tbody tr').length > 0,
-          { timeout: 8000 }
-        );
-      } catch(e) { console.log('⚠️ Tabla de facturas tardó en cargar'); }
-      await new Promise(r => setTimeout(r, 500));
-
-      // Leer tabla
-      // Cols: Estado(0) Factura(1) mesa(2) Venta(3) Propina(4) Domicilio(5)
-      //       Total(6)  EstadoDIAN(7)  hora(8)  plataforma(9)  ...  Cajero(11)
-      const filas = await page.evaluate(() => {
-        const rows = [];
-        document.querySelectorAll('table tbody tr').forEach(tr => {
-          const cells = [...tr.querySelectorAll('td')]
-            .map(td => td.innerText.trim().replace(/\s+/g, ' '));
-          if (cells.length >= 7 && /^\d+$/.test(cells[1])) rows.push(cells);
-        });
-        return rows;
-      });
-
-      const facturasList = filas.map(cells => ({
-        factura:   cells[1],
-        mesa:      cells[2] || '',
-        venta:     parseNum(cells[3]),
-        total:     parseNum(cells[6]),
-        descuento: 0,
-        fecha:     hoy,
-        hora:      cells[8] || cells[7] || '',
-      }));
-
-      console.log(`📄 Lista Facturas hoy: ${facturasList.length} facturas`);
-      if (incluirDetalle) await _scrapeDetallesFacturas(page, facturasList);
-
-      await browser.close();
-      browser = null;
-      return facturasList;
-    }
-
-    // ══════════════════════════════════════════════════════
-    // RUTA B: RANGO → Histórico de Facturas
-    // ══════════════════════════════════════════════════════
-    const menusCandidatos = [
-      ['Caja', 'CAJA'],
-      ['Vender', 'VENDER'],
-      ['Estadísticas', 'Estadisticas', 'ESTADÍSTICAS'],
-      ['Reportes', 'REPORTES'],
-    ];
-    let histOk = false;
-
-    for (const textoMenu of menusCandidatos) {
-      const menuClicked = await navC(textoMenu);
-      if (!menuClicked) continue;
-      await new Promise(r => setTimeout(r, 1500));
-
-      histOk = await navC([
-        'Historico de Facturas', 'Histórico de Facturas',
-        'Historico Facturas',    'Histórico Facturas',
-        'historico facturas',    'historico de facturas',
-      ]);
-      if (histOk) break;
-    }
-
-    if (!histOk) {
-      console.log('⚠️ No se pudo navegar a Histórico de Facturas');
+    const ok = await navC([
+      'Historico Ventas', 'Histórico Ventas',
+      'Historico de Facturas', 'Histórico de Facturas',
+      'Historico de Ventas',   'Histórico de Ventas',
+    ]);
+    if (!ok) {
+      console.log('⚠️ extraerHistoricoFacturas: no encontró "Historico Ventas" bajo Caja');
       await browser.close();
       return [];
     }
-    console.log('✅ Navegó a Histórico de Facturas');
+    console.log('✅ extraerHistoricoFacturas: navegó a Historico Ventas');
     await new Promise(r => setTimeout(r, 2000));
 
-    // Establecer fechas
+    // ── Establecer fechas ─────────────────────────────────────────────────────
     await page.evaluate((fi, ff) => {
       const inputs = [...document.querySelectorAll('input[type="date"]')];
       const set = (inp, val) => {
@@ -1312,16 +1236,14 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
         inp.dispatchEvent(new Event('change', { bubbles: true }));
       };
       set(inputs[0], fi);
-      set(inputs[1], ff);
+      if (inputs[1]) set(inputs[1], ff);
     }, fechaInicial, fechaFinal);
 
-    // Click "Cargar"
+    // ── Click Cargar ──────────────────────────────────────────────────────────
     await page.evaluate((fnSrc) => eval(fnSrc)(['Cargar', 'CARGAR', 'cargar']), _JS_FIND_AND_CLICK);
     await new Promise(r => setTimeout(r, 4000));
 
-    // Leer tabla Histórico
-    // Cols: Estado(0) Factura(1) Mesa(2) Venta(3) Propina(4) Domicilio(5)
-    //       Total(6)  Fecha(7 → "YYYY-MM-DD HH:MM:SS")  EstadoDIAN(8)  ...
+    // ── Leer tabla ────────────────────────────────────────────────────────────
     const filas = await page.evaluate(() => {
       const rows = [];
       document.querySelectorAll('table tbody tr').forEach(tr => {
@@ -1333,7 +1255,7 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
     });
 
     const facturasList = filas.map(cells => {
-      const fh = cells[7] || '';
+      const fh = cells[7] || '';  // "2026-04-09 10:42:44"
       return {
         factura:   cells[1],
         mesa:      cells[2] || '',
@@ -1345,8 +1267,11 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
       };
     });
 
-    console.log(`📄 Histórico: ${facturasList.length} facturas (${fechaInicial}→${fechaFinal})`);
-    if (incluirDetalle) await _scrapeDetallesFacturas(page, facturasList);
+    console.log(`📄 Historico Ventas: ${facturasList.length} facturas (${fechaInicial}→${fechaFinal})`);
+
+    if (incluirDetalle && facturasList.length > 0 && facturasList.length <= 30) {
+      await _scrapeDetallesFacturas(page, facturasList);
+    }
 
     await browser.close();
     browser = null;

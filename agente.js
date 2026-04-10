@@ -936,18 +936,19 @@ async function reporteRango(desde, hasta, titulo) {
   const tituloFinal = titulo || `${desde} al ${hasta}`;
   const esDiaUnico  = desde === hasta;
   try {
-    // Una sola sesión POS — facturas se obtienen con el mismo page antes de cerrar
+    // POS primero — cerrar antes de abrir app.vectorpos.com.co (un browser a la vez)
     const { browser: br1, page: pg1 } = await monitor.crearSesionPOS();
     const ventas    = await monitor.extraerVentasGenerales(pg1, desde, hasta);
     const cajeros   = await monitor.extraerVentasCajero(pg1, desde, hasta);
     const prodRaw   = await monitor.extraerVentasProducto(pg1, desde, hasta);
     const horasData = await monitor.extraerVentasPorHora(pg1, desde, hasta);
-    // Facturas con detalle solo para día único — misma sesión, no abre otro browser
-    const facturas = esDiaUnico
-      ? await monitor.extraerFacturasConSesion(pg1, desde, true)
-          .catch(e => { console.error('⚠️ Facturas sesión:', e.message); return []; })
-      : [];
     await br1.close();
+
+    // Facturas exactas desde app.vectorpos.com.co → Caja → Historico Ventas
+    const facturas = esDiaUnico
+      ? await monitor.extraerHistoricoFacturas(desde, hasta, true)
+          .catch(e => { console.error('⚠️ Facturas:', e.message); return []; })
+      : [];
 
     // "RECARGA" sola = servicio de llenado; "RECARGA SHANTAL 33gr..." = producto vendido
     const esServicio = (nombre) => {
@@ -1689,7 +1690,7 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
 
     const esDiaUnico = desde === hasta;
 
-    // Una sola sesión POS — facturas se obtienen con el mismo page antes de cerrar
+    // POS primero — cerrar antes de abrir app.vectorpos.com.co (un browser a la vez)
     const { browser: br2, page: pg2 } = await monitor.crearSesionPOS();
     const cierres      = await monitor.extraerCierresCaja(pg2, desde, hasta);
     const cajerosRango = await monitor.extraerVentasCajero(pg2, desde, hasta);
@@ -1698,12 +1699,13 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
       : await monitor.extraerVentasCajero(pg2, hoy, hoy);
     const productosRaw = await monitor.extraerVentasProducto(pg2, desde, hasta);
     const ventasHora   = await monitor.extraerVentasPorHora(pg2, desde, hasta);
-    // Facturas con detalle solo para día único — misma sesión, no abre otro browser
-    const facturas = esDiaUnico
-      ? await monitor.extraerFacturasConSesion(pg2, desde, true)
-          .catch(e => { console.error('⚠️ Facturas sesión caja:', e.message); return []; })
-      : [];
     await br2.close();
+
+    // Facturas exactas desde app.vectorpos.com.co → Caja → Historico Ventas
+    const facturas = esDiaUnico
+      ? await monitor.extraerHistoricoFacturas(desde, hasta, true)
+          .catch(e => { console.error('⚠️ Facturas caja:', e.message); return []; })
+      : [];
     const totalDescFacturas = facturas.reduce((s, f) => s + (f.descuento || 0), 0);
 
     // "RECARGA" sola = servicio; "RECARGA SHANTAL 33gr..." = producto
