@@ -1116,20 +1116,60 @@ async function _cerrarModalFactura(page) {
 
 // ── Helper: login en app.vectorpos.com.co ─────────────────────────────────────
 async function _loginApp(page, user, pass) {
-  await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'networkidle0', timeout: 30000 });
-  await page.type('#txtEmail', user, { delay: 30 });
-  await page.type('#txtClave', pass, { delay: 30 });
+  // Misma ruta que pos.vectorpos.com.co
+  const loginUrl = `${APP_BASE}/index.php?r=site/login`;
+  console.log(`🔑 _loginApp → ${loginUrl}`);
+  await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await new Promise(r => setTimeout(r, 1000));
+
+  const url1 = page.url();
+  console.log(`🔑 URL tras goto: ${url1}`);
+
+  // Detectar campos disponibles
+  const campos = await page.evaluate(() => ({
+    txtEmail:  !!document.querySelector('#txtEmail'),
+    txtClave:  !!document.querySelector('#txtClave'),
+    txtUser:   !!document.querySelector('#txtUser'),
+    txtPw:     !!document.querySelector('#txtPw'),
+    btnEntrar: !!document.querySelector('#btnEntrar'),
+    submit:    !!document.querySelector('input[type="submit"]'),
+  }));
+  console.log('🔑 Campos login:', JSON.stringify(campos));
+
+  if (campos.txtEmail) {
+    await page.type('#txtEmail', user, { delay: 30 });
+  } else if (campos.txtUser) {
+    await page.type('#txtUser', user, { delay: 40 });
+  } else {
+    console.log('⚠️ _loginApp: no se encontró campo usuario');
+  }
+
+  if (campos.txtClave) {
+    await page.type('#txtClave', pass, { delay: 30 });
+  } else if (campos.txtPw) {
+    await page.type('#txtPw', pass, { delay: 40 });
+  } else {
+    console.log('⚠️ _loginApp: no se encontró campo password');
+  }
+
+  const clickSelector = campos.btnEntrar ? '#btnEntrar' : 'input[type="submit"]';
   await Promise.all([
-    page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
-    page.click('#btnEntrar'),
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {}),
+    page.click(clickSelector),
   ]);
-  if (page.url().includes('cambioSucursal')) {
+  await new Promise(r => setTimeout(r, 2500));
+
+  const url2 = page.url();
+  console.log(`🔑 URL tras login: ${url2}`);
+
+  if (url2.includes('cambioSucursal')) {
     await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {}),
       page.click('a,button'),
     ]);
+    await new Promise(r => setTimeout(r, 1500));
+    console.log(`🔑 URL tras cambioSucursal: ${page.url()}`);
   }
-  await new Promise(r => setTimeout(r, 2500));
 }
 
 // ── Helper: scrapear detalle de cada factura (click → modal → cerrar) ─────────
@@ -1210,7 +1250,10 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
     );
 
     // ── Navegar: Caja → Historico Ventas ──────────────────────────────────────
-    await navC(['Caja', 'CAJA']);
+    console.log(`📌 URL antes de navegar: ${page.url()}`);
+
+    const cajaClic = await navC(['Caja', 'CAJA']);
+    console.log(`📌 Click Caja: ${cajaClic}`);
     await new Promise(r => setTimeout(r, 1200));
 
     const ok = await navC([
@@ -1218,8 +1261,14 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
       'Historico de Facturas', 'Histórico de Facturas',
       'Historico de Ventas',   'Histórico de Ventas',
     ]);
+    console.log(`📌 Click Historico Ventas: ${ok}`);
     if (!ok) {
-      console.log('⚠️ extraerHistoricoFacturas: no encontró "Historico Ventas" bajo Caja');
+      // Loguear texto visible para diagnóstico
+      const textos = await page.evaluate(() =>
+        [...document.querySelectorAll('a,button,[onclick]')]
+          .map(e => e.innerText.trim()).filter(t => t.length > 1).slice(0, 30)
+      );
+      console.log('📌 Elementos clickeables visibles:', textos.join(' | '));
       await browser.close();
       return [];
     }
@@ -1227,7 +1276,7 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
     await new Promise(r => setTimeout(r, 2000));
 
     // ── Establecer fechas ─────────────────────────────────────────────────────
-    await page.evaluate((fi, ff) => {
+    const inputsCount = await page.evaluate((fi, ff) => {
       const inputs = [...document.querySelectorAll('input[type="date"]')];
       const set = (inp, val) => {
         if (!inp) return;
@@ -1237,10 +1286,13 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
       };
       set(inputs[0], fi);
       if (inputs[1]) set(inputs[1], ff);
+      return inputs.length;
     }, fechaInicial, fechaFinal);
+    console.log(`📌 Inputs fecha encontrados: ${inputsCount}, valores: ${fechaInicial} → ${fechaFinal}`);
 
     // ── Click Cargar ──────────────────────────────────────────────────────────
-    await page.evaluate((fnSrc) => eval(fnSrc)(['Cargar', 'CARGAR', 'cargar']), _JS_FIND_AND_CLICK);
+    const cargarClic = await page.evaluate((fnSrc) => eval(fnSrc)(['Cargar', 'CARGAR', 'cargar']), _JS_FIND_AND_CLICK);
+    console.log(`📌 Click Cargar: ${cargarClic}`);
     await new Promise(r => setTimeout(r, 4000));
 
     // ── Leer tabla ────────────────────────────────────────────────────────────
