@@ -892,11 +892,12 @@ async function reporteSemana() {
  * @returns {Array} [{nombre, cantidad, valorProd, valorServicio, descuento, valorNeto}]
  */
 function procesarFacturasParaProductos(facturas) {
-  // "RECARGA" sola = servicio de llenado; "RECARGA SHANTAL 33gr..." = producto vendido
+  // Servicios/consumibles: PREPARAC, PREP, RECARGA sola, ALCOHOL
   const esServ = (n) => {
     const s = (n || '').trim().toLowerCase();
     if (/^preparac|^prep\b/.test(s)) return true;
     if (/^recarga(\s+\d|\s*$)/.test(s)) return true;
+    if (/^alcohol\b/.test(s)) return true;
     return false;
   };
   const mapa = {};
@@ -950,11 +951,13 @@ async function reporteRango(desde, hasta, titulo) {
           .catch(e => { console.error('⚠️ Facturas:', e.message); return []; })
       : [];
 
-    // "RECARGA" sola = servicio de llenado; "RECARGA SHANTAL 33gr..." = producto vendido
+    // "RECARGA" sola = servicio; "RECARGA SHANTAL 33gr..." = producto
+    // "ALCOHOL" / "PREPARAC" = consumibles/servicios, no se listan como productos
     const esServicio = (nombre) => {
       const s = (nombre || '').trim().toLowerCase();
       if (/^preparac|^prep\b/.test(s)) return true;
       if (/^recarga(\s+\d|\s*$)/.test(s)) return true;
+      if (/^alcohol\b/.test(s)) return true;
       return false;
     };
     const preparaciones      = prodRaw.filter(p => esServicio(p.nombre));
@@ -1708,11 +1711,12 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
       : [];
     const totalDescFacturas = facturas.reduce((s, f) => s + (f.descuento || 0), 0);
 
-    // "RECARGA" sola = servicio; "RECARGA SHANTAL 33gr..." = producto
+    // Servicios/consumibles: PREPARAC, PREP, RECARGA sola, ALCOHOL
     const esServicioCaja = (n) => {
       const s = (n || '').trim().toLowerCase();
       if (/^preparac|^prep\b/.test(s)) return true;
       if (/^recarga(\s+\d|\s*$)/.test(s)) return true;
+      if (/^alcohol\b/.test(s)) return true;
       return false;
     };
     const productos = productosRaw

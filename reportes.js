@@ -481,7 +481,11 @@ async function detectarNuevaVenta() {
     const fp  = (v) => Math.round(v).toLocaleString('es-CO');
 
     const cfg = await db.obtenerConfig();
-    const ultimoTotalConocido = parseFloat(cfg?.ultimo_total_ventas || '0');
+    // Reset diario: si la fecha guardada no es hoy, el acumulado es de otro día → reiniciar a 0
+    const ultimaFecha         = cfg?.ultima_fecha_ventas || '';
+    const ultimoTotalConocido = ultimaFecha === hoy
+      ? parseFloat(cfg?.ultimo_total_ventas || '0')
+      : 0;
 
     const { browser, page } = await monitor.crearSesionPOS();
     const cajeros  = await monitor.extraerVentasCajero(page, hoy, hoy);
@@ -489,15 +493,21 @@ async function detectarNuevaVenta() {
     await browser.close();
 
     const esSrv = (n) => { const s=(n||'').trim().toLowerCase(); return /^preparac|^prep\b/.test(s) || /^recarga(\s+\d|\s*$)/.test(s); };
+    const esConsumible = (n) => /^alcohol\b/i.test((n||'').trim()); // alcohol = consumible, no producto
     const totalCajeros = cajeros.reduce((s, c) => s + c.total, 0);
     const totalProds   = productos.filter(p => !esSrv(p.nombre)).reduce((s, p) => s + (p.valor || 0), 0);
     const totalActual  = totalCajeros > 0 ? totalCajeros : totalProds;
+
+    console.log(`🛍️ Detector venta: actual=$${totalActual} vs último=$${ultimoTotalConocido} (fecha: ${ultimaFecha}→${hoy})`);
 
     if (totalActual <= ultimoTotalConocido) return; // sin cambios
 
     // Calcular cuánto es la nueva venta
     const nuevaVenta = totalActual - ultimoTotalConocido;
-    await db.actualizarConfig({ ultimo_total_ventas: String(totalActual) });
+    await db.actualizarConfig({
+      ultimo_total_ventas: String(totalActual),
+      ultima_fecha_ventas: hoy,
+    });
 
     // Solo notificar si la diferencia es significativa (> $1.000)
     if (nuevaVenta < 1000) return;
@@ -514,7 +524,7 @@ async function detectarNuevaVenta() {
     const progreso   = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
 
     // Últimos productos vendidos
-    const ultimos = productos.filter(p => !esSrv(p.nombre)).slice(0, 3);
+    const ultimos = productos.filter(p => !esSrv(p.nombre) && !esConsumible(p.nombre)).slice(0, 3);
 
     let msg = `🛍️ *NUEVA VENTA — ${hoy}*\n\n`;
     msg += `💰 *+$${fp(nuevaVenta)}*\n`;
