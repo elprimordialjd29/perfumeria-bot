@@ -1006,17 +1006,150 @@ async function extraerVentasPorHora(page, fechaInicial, fechaFinal) {
 // Permite cruzar productos con sus recargas/preparaciones exactas y descuentos
 // ──────────────────────────────────────────────
 
+// ── Helper: leer y cerrar el modal de detalle de una factura ──────────────────
+async function _leerModalFactura(page) {
+  return await page.evaluate(() => {
+    // Buscar el modal abierto
+    const container =
+      document.querySelector('.modal.show') ||
+      [...document.querySelectorAll('.modal')].find(m => {
+        const s = window.getComputedStyle(m);
+        return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+      }) ||
+      // Fallback: cualquier div con texto "Factura N°"
+      [...document.querySelectorAll('div,section')].find(el =>
+        /factura\s*n[°º]/i.test(el.innerText?.substring(0,120) || '')
+      );
+
+    if (!container) return null;
+    const text = container.innerText || '';
+
+    // Items: filas donde cells[0] es número, cells[1] es nombre del producto
+    const items = [];
+    container.querySelectorAll('table tr').forEach(tr => {
+      const cells = [...tr.querySelectorAll('td')]
+        .map(td => td.innerText.trim().replace(/\s+/g,' '));
+      if (cells.length >= 3 && /^\d+$/.test(cells[0]) && cells[1].length > 1) {
+        items.push({
+          cantidad: parseInt(cells[0]) || 1,
+          nombre:   cells[1],
+          valor:    parseInt(cells[2].replace(/\./g,'').replace(/[^0-9]/g,'')) || 0,
+        });
+      }
+    });
+
+    // Leer totales del modal: SubTotal, Descuento, Total
+    const exNum = (pat) => {
+      const m = text.match(pat);
+      return m ? parseInt(m[1].replace(/\./g,'').replace(/[^0-9]/g,'')) || 0 : 0;
+    };
+    const subTotal  = exNum(/sub\s*total[^\d]*([\d.]+)/i);
+    const descModal = exNum(/descuento[^\d]*([\d.]+)/i);
+    const totalModal= exNum(/^total[^\d]*([\d.]+)/im);
+
+    // Forma de pago
+    const ef = exNum(/ventas\s+efectivo[^\d]*([\d.]+)/i) ||
+               exNum(/efectivo[^\d]*([\d.]+)/i);
+    const bc = exNum(/bancolombia[^\d]*([\d.]+)/i);
+    const nq = exNum(/nequi[^\d]*([\d.]+)/i);
+
+    return items.length > 0 ? {
+      items,
+      subTotal, descuento: descModal, totalModal,
+      efectivo: ef, bancolombia: bc, nequi: nq,
+      medioPago: ef > 0 ? 'Efectivo' : bc > 0 ? 'Bancolombia' : nq > 0 ? 'Nequi' : 'Otro',
+    } : null;
+  });
+}
+
+async function _cerrarModalFactura(page) {
+  await page.evaluate(() => {
+    // Intentar botón "Cerrar" (texto exacto)
+    const cerrar = [...document.querySelectorAll('button')]
+      .find(b => /^cerrar$/i.test(b.innerText.trim()));
+    if (cerrar) { cerrar.click(); return; }
+    // Intentar × o data-dismiss
+    const closeBtn = document.querySelector(
+      'button[data-dismiss="modal"], .modal-header .close, [aria-label="Close"], .btn-close'
+    );
+    if (closeBtn) { closeBtn.click(); return; }
+    // Intentar backdrop
+    const backdrop = document.querySelector('.modal-backdrop');
+    if (backdrop) backdrop.click();
+  });
+  await new Promise(r => setTimeout(r, 700));
+}
+
+// ── Helper: login en app.vectorpos.com.co ─────────────────────────────────────
+async function _loginApp(page, user, pass) {
+  await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'networkidle0', timeout: 30000 });
+  await page.type('#txtEmail', user, { delay: 30 });
+  await page.type('#txtClave', pass, { delay: 30 });
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+    page.click('#btnEntrar'),
+  ]);
+  if (page.url().includes('cambioSucursal')) {
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+      page.click('a,button'),
+    ]);
+  }
+  await new Promise(r => setTimeout(r, 2000));
+}
+
+// ── Helper: scrapear detalles de cada factura en la tabla actual ──────────────
+async function _scrapeDetallesFacturas(page, facturasList) {
+  if (facturasList.length === 0 || facturasList.length > 30) return;
+  const parseNum = (s) => parseInt(String(s||'0').replace(/\./g,'').replace(/[^0-9]/g,'')) || 0;
+
+  for (const factRow of facturasList) {
+    const numFact = factRow.factura;
+    try {
+      // Click en el link del número de factura
+      const clicked = await page.evaluate((num) => {
+        const link = [...document.querySelectorAll('table td a')]
+          .find(a => a.innerText.trim() === num);
+        if (link) { link.click(); return true; }
+        return false;
+      }, numFact);
+
+      if (!clicked) { console.log(`⚠️ No se encontró link para factura ${numFact}`); continue; }
+      await new Promise(r => setTimeout(r, 1800));
+
+      const detalle = await _leerModalFactura(page);
+      if (detalle) {
+        // El descuento real viene del modal (SubTotal - Total del modal)
+        const descReal = detalle.subTotal > 0 && detalle.totalModal > 0
+          ? Math.max(0, detalle.subTotal - detalle.totalModal)
+          : detalle.descuento;
+        Object.assign(factRow, detalle, { descuento: descReal });
+      }
+
+      await _cerrarModalFactura(page);
+    } catch(e) {
+      console.error(`⚠️ Detalle factura ${numFact}:`, e.message);
+    }
+  }
+}
+
 /**
- * Extrae el histórico de facturas para un rango de fechas.
- * @param {string} fechaInicial - 'YYYY-MM-DD'
- * @param {string} fechaFinal   - 'YYYY-MM-DD'
- * @param {boolean} incluirDetalle - true = hace clic en cada factura para obtener sus items
+ * Extrae facturas con sus items exactos para un rango de fechas.
+ *
+ * Para HOY: navega a Vender → Lista facturas (sin filtro de fecha).
+ * Para rangos: navega a Histórico de Facturas con filtro de fechas.
+ *
+ * Con incluirDetalle=true hace clic en cada factura para obtener:
+ *   items[], subTotal, descuento (real), medioPago
+ *
  * @returns {Promise<Array>} [{factura, fecha, hora, venta, total, descuento, items?, medioPago?}]
  */
 async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle = false) {
   const user = process.env.VECTORPOS_USER;
   const pass = process.env.VECTORPOS_PASS;
+  const hoy  = fechaEnColombia(0);
   let browser = null;
+  const parseNum = (s) => parseInt(String(s||'0').replace(/\./g,'').replace(/[^0-9]/g,'')) || 0;
 
   try {
     browser = await puppeteer.launch({
@@ -1025,79 +1158,86 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
     });
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    await _loginApp(page, user, pass);
 
-    // Intercept API responses – capturar cualquier endpoint de facturas
-    page.on('response', async res => {
-      const url = res.url();
-      const ct  = res.headers()['content-type'] || '';
-      if (!ct.includes('json')) return;
-      try {
-        const text = await res.text();
-        if (!text || (!text.startsWith('[') && !text.startsWith('{'))) return;
-        const data = JSON.parse(text);
-        if (url.toLowerCase().includes('factura') || url.toLowerCase().includes('historico')) {
-          const arr = data?.datos || (Array.isArray(data) ? data : null);
-          if (arr?.length > 0) console.log(`📡 Facturas API: ${url.replace(APP_BASE,'')} → ${arr.length}`);
-        }
-      } catch(e) {}
-    });
+    // ══════════════════════════════════════════
+    // RUTA A: HOY → Lista Facturas (Vender → sidebar)
+    // ══════════════════════════════════════════
+    if (fechaInicial === hoy && fechaFinal === hoy) {
+      // Paso 1: click en "Vender" del menú superior (por si no es la vista actual)
+      await page.evaluate(() => {
+        const vender = [...document.querySelectorAll('a,div,span,li')]
+          .find(e => /^vender$/i.test(e.innerText?.trim() || ''));
+        if (vender) vender.click();
+      });
+      await new Promise(r => setTimeout(r, 1200));
 
-    // Login
-    await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'networkidle0', timeout: 30000 });
-    await page.type('#txtEmail', user, { delay: 30 });
-    await page.type('#txtClave', pass, { delay: 30 });
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
-      page.click('#btnEntrar'),
-    ]);
-    if (page.url().includes('cambioSucursal')) {
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
-        page.click('a,button'),
-      ]);
-    }
-    await new Promise(r => setTimeout(r, 2000));
-
-    // Intentar navegar al Histórico de Facturas
-    // Primero: probar URLs directas con ?r= (patrón que usa VectorPOS)
-    const candidatos = [
-      `${APP_BASE}/?r=caja/historicoFactura`,
-      `${APP_BASE}/?r=venta/historicoFacturas`,
-      `${APP_BASE}/?r=factura/historico`,
-      `${APP_BASE}/?r=ventas/historicoFacturas`,
-    ];
-
-    let histOk = false;
-    for (const url of candidatos) {
-      try {
-        await page.goto(url, { waitUntil: 'networkidle0', timeout: 10000 });
-        const titulo = await page.evaluate(() =>
-          document.querySelector('h1,h2,.page-title')?.innerText?.trim() || ''
-        );
-        if (/hist[oó]rico/i.test(titulo)) { histOk = true; break; }
-      } catch(e) {}
-    }
-
-    if (!histOk) {
-      // Fallback: navegar por clicks en la UI
-      await page.goto(`${APP_BASE}/#`, { waitUntil: 'networkidle0', timeout: 15000 });
+      // Paso 2: click en "Lista facturas" del sidebar izquierdo
+      const ok = await page.evaluate(() => {
+        const el = [...document.querySelectorAll('a,li,span,div')]
+          .find(e => /^lista\s*facturas?$/i.test(e.innerText?.trim() || ''));
+        if (el) { el.click(); return true; }
+        return false;
+      });
+      if (!ok) console.log('⚠️ No se encontró "Lista facturas" en sidebar');
       await new Promise(r => setTimeout(r, 2000));
-      for (const menuName of ['Caja', 'Vender', 'Estadísticas', 'Estadisticas']) {
-        const clicked = await page.evaluate((n) => {
-          const el = [...document.querySelectorAll('a,div,span')].find(e => e.innerText?.trim() === n);
-          if (el) { el.click(); return true; }
-          return false;
-        }, menuName);
-        if (!clicked) continue;
-        await new Promise(r => setTimeout(r, 1200));
-        histOk = await page.evaluate(() => {
-          const el = [...document.querySelectorAll('a,span,li,div')]
-            .find(e => /hist[oó]rico.*factura|historico.*factura/i.test(e.innerText?.trim() || ''));
-          if (el) { el.click(); return true; }
-          return false;
+
+      // Leer tabla
+      // Columnas Lista Facturas: Estado(0) Factura(1) mesa(2) Venta(3) Propina(4)
+      //   Domicilio(5) Total(6) EstadoDIAN(7) hora(8) plataforma(9) codPlat(10) Cajero(11)
+      const filas = await page.evaluate(() => {
+        const rows = [];
+        document.querySelectorAll('table tbody tr, table tr').forEach(tr => {
+          const cells = [...tr.querySelectorAll('td')]
+            .map(td => td.innerText.trim().replace(/\s+/g,' '));
+          if (cells.length >= 7 && /^\d+$/.test(cells[1])) rows.push(cells);
         });
-        if (histOk) break;
-      }
+        return rows;
+      });
+
+      const facturasList = filas.map(cells => ({
+        factura:   cells[1],
+        mesa:      cells[2] || '',
+        venta:     parseNum(cells[3]),
+        total:     parseNum(cells[6]),
+        descuento: 0,   // se sobreescribe desde modal si incluirDetalle=true
+        fecha:     hoy,
+        hora:      cells[8] || '',
+      }));
+
+      console.log(`📄 Lista Facturas hoy: ${facturasList.length} facturas`);
+      if (incluirDetalle) await _scrapeDetallesFacturas(page, facturasList);
+
+      await browser.close();
+      browser = null;
+      return facturasList;
+    }
+
+    // ══════════════════════════════════════════
+    // RUTA B: RANGO → Histórico de Facturas
+    // ══════════════════════════════════════════
+
+    // Intentar navegación por clicks (múltiples menús candidatos)
+    const menusCandidatos = ['Caja', 'Vender', 'Estadísticas', 'Estadisticas', 'Reportes'];
+    let histOk = false;
+
+    for (const menuName of menusCandidatos) {
+      const menuClicked = await page.evaluate((n) => {
+        const el = [...document.querySelectorAll('a,div,span,li')]
+          .find(e => e.innerText?.trim() === n);
+        if (el) { el.click(); return true; }
+        return false;
+      }, menuName);
+      if (!menuClicked) continue;
+      await new Promise(r => setTimeout(r, 1200));
+
+      histOk = await page.evaluate(() => {
+        const el = [...document.querySelectorAll('a,span,li,div')]
+          .find(e => /hist[oó]rico\s*(?:de\s*)?factura/i.test(e.innerText?.trim() || ''));
+        if (el) { el.click(); return true; }
+        return false;
+      });
+      if (histOk) break;
     }
 
     if (!histOk) {
@@ -1105,9 +1245,9 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
       await browser.close();
       return [];
     }
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 2000));
 
-    // Establecer rango de fechas
+    // Establecer fechas
     await page.evaluate((fi, ff) => {
       const inputs = [...document.querySelectorAll('input[type="date"]')];
       const set = (inp, val) => {
@@ -1128,105 +1268,34 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
     });
     await new Promise(r => setTimeout(r, 4000));
 
-    // Leer tabla
-    const parseNum = (s) => parseInt(String(s||'0').replace(/\./g,'').replace(/[^0-9]/g,'')) || 0;
-
+    // Leer tabla Histórico
+    // Columnas: Estado(0) Factura(1) Mesa(2) Venta(3) Propina(4) Domicilio(5)
+    //   Total(6) Fecha(7 → "YYYY-MM-DD HH:MM:SS") EstadoDIAN(8) NombreCliente(9)
     const filas = await page.evaluate(() => {
       const rows = [];
       document.querySelectorAll('table tbody tr, table tr').forEach(tr => {
         const cells = [...tr.querySelectorAll('td')]
           .map(td => td.innerText.trim().replace(/\s+/g,' '));
-        // Columnas: Estado(0) Factura(1) Mesa(2) Venta(3) Propina(4) Domicilio(5) Total(6) Fecha(7)...
         if (cells.length >= 7 && /^\d+$/.test(cells[1])) rows.push(cells);
       });
       return rows;
     });
 
     const facturasList = filas.map(cells => {
-      const venta = parseNum(cells[3]);
-      const total = parseNum(cells[6]);
       const fechaHora = cells[7] || '';
       return {
         factura:   cells[1],
         mesa:      cells[2] || '',
-        venta,
-        total,
-        descuento: Math.max(0, venta - total),
+        venta:     parseNum(cells[3]),
+        total:     parseNum(cells[6]),
+        descuento: 0,
         fecha:     fechaHora.split(' ')[0] || fechaInicial,
         hora:      fechaHora.split(' ')[1] || '',
       };
     });
 
     console.log(`📄 Histórico: ${facturasList.length} facturas (${fechaInicial}→${fechaFinal})`);
-
-    // Detalle por factura (solo si se solicita y hay ≤ 30 facturas)
-    if (incluirDetalle && facturasList.length > 0 && facturasList.length <= 30) {
-      for (const factRow of facturasList) {
-        const numFact = factRow.factura;
-        try {
-          // Click en el link de la factura
-          await page.evaluate((num) => {
-            const link = [...document.querySelectorAll('table td a')]
-              .find(a => a.innerText.trim() === num);
-            if (link) link.click();
-          }, numFact);
-          await new Promise(r => setTimeout(r, 1500));
-
-          // Scrapear el modal
-          const detalle = await page.evaluate(() => {
-            const container =
-              document.querySelector('.modal.show') ||
-              document.querySelector('.modal[style*="block"]') ||
-              document.querySelector('[role="dialog"]') ||
-              document.body;
-
-            const text = container.innerText || '';
-            const items = [];
-
-            container.querySelectorAll('table tr, table tbody tr').forEach(tr => {
-              const cells = [...tr.querySelectorAll('td')]
-                .map(td => td.innerText.trim().replace(/\s+/g,' '));
-              // Fila de item: Cnt(número) | Nombre(texto) | Valor(moneda)
-              if (cells.length >= 3 && /^\d+$/.test(cells[0]) && cells[1].length > 1) {
-                items.push({
-                  cantidad: parseInt(cells[0]) || 1,
-                  nombre: cells[1],
-                  valor: parseInt(cells[2].replace(/\./g,'').replace(/[^0-9]/g,'')) || 0,
-                });
-              }
-            });
-
-            const exNum = (pattern) => {
-              const m = text.match(pattern);
-              return m ? parseInt(m[1].replace(/\./g,'').replace(/[^0-9]/g,'')) || 0 : 0;
-            };
-            const ef   = exNum(/ventas\s+efectivo[^\d]*([\d.]+)/i);
-            const bc   = exNum(/bancolombia[^\d]*([\d.]+)/i);
-            const nq   = exNum(/nequi[^\d]*([\d.]+)/i);
-
-            return items.length > 0 ? {
-              items,
-              efectivo: ef, bancolombia: bc, nequi: nq,
-              medioPago: ef > 0 ? 'Efectivo' : bc > 0 ? 'Bancolombia' : nq > 0 ? 'Nequi' : 'Otro',
-            } : null;
-          });
-
-          if (detalle) Object.assign(factRow, detalle);
-
-          // Cerrar modal
-          await page.evaluate(() => {
-            const close = document.querySelector('.modal .close,[data-dismiss="modal"],.btn-close,.modal-header .close');
-            if (close) { close.click(); return; }
-            const cerrar = [...document.querySelectorAll('button')]
-              .find(b => /^cerrar$|^close$/i.test(b.innerText.trim()));
-            if (cerrar) cerrar.click();
-          });
-          await new Promise(r => setTimeout(r, 700));
-        } catch(e) {
-          console.error(`⚠️ Detalle factura ${numFact}:`, e.message);
-        }
-      }
-    }
+    if (incluirDetalle) await _scrapeDetallesFacturas(page, facturasList);
 
     await browser.close();
     browser = null;
