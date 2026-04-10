@@ -1376,10 +1376,15 @@ async function extraerFacturasConSesion(page, fecha, incluirDetalle = false) {
   );
 
   try {
-    // Intentar "Lista facturas" directamente (sidebar puede ya estar visible)
+    // Volver al inicio para asegurarse de que el sidebar esté visible
+    // (después de extracciones de stats la página queda en URLs de reportes sin sidebar)
+    await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await new Promise(r => setTimeout(r, 1500));
+
+    // Intentar "Lista facturas" directamente (puede aparecer en sidebar)
     let ok = await navC(['Lista facturas', 'Lista Facturas', 'LISTA FACTURAS']);
     if (!ok) {
-      // Ir a "Vender" primero
+      // Ir a "Vender" primero para abrir el submenú
       await navC(['Vender', 'VENDER', 'vender']);
       await new Promise(r => setTimeout(r, 2000));
       ok = await navC(['Lista facturas', 'Lista Facturas', 'LISTA FACTURAS']);
