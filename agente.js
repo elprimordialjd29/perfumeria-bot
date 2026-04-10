@@ -937,19 +937,22 @@ async function reporteRango(desde, hasta, titulo) {
   const tituloFinal = titulo || `${desde} al ${hasta}`;
   const esDiaUnico  = desde === hasta;
   try {
-    // POS primero — cerrar antes de abrir app.vectorpos.com.co (un browser a la vez)
+    const hoyStr = monitor.fechaHoy();
     const { browser: br1, page: pg1 } = await monitor.crearSesionPOS();
     const ventas    = await monitor.extraerVentasGenerales(pg1, desde, hasta);
     const cajeros   = await monitor.extraerVentasCajero(pg1, desde, hasta);
     const prodRaw   = await monitor.extraerVentasProducto(pg1, desde, hasta);
     const horasData = await monitor.extraerVentasPorHora(pg1, desde, hasta);
-    await br1.close();
 
-    // Facturas exactas desde app.vectorpos.com.co → Caja → Historico Ventas
-    const facturas = esDiaUnico
-      ? await monitor.extraerHistoricoFacturas(desde, hasta, true)
-          .catch(e => { console.error('⚠️ Facturas:', e.message); return []; })
-      : [];
+    // Solo para HOY: extrae facturas con ítems desde el sidebar Lista facturas del POS.
+    // Para días pasados (ayer, semana, mes…) no se scarapean facturas aquí —
+    // ese detalle solo aplica en reporteCierresCaja.
+    let facturas = [];
+    if (esDiaUnico && desde === hoyStr) {
+      facturas = await monitor.extraerFacturasConSesion(pg1, desde, true)
+        .catch(e => { console.error('⚠️ Facturas hoy:', e.message); return []; });
+    }
+    await br1.close();
 
     // "RECARGA" sola = servicio; "RECARGA SHANTAL 33gr..." = producto
     // "ALCOHOL" / "PREPARAC" = consumibles/servicios, no se listan como productos
@@ -1702,13 +1705,23 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
       : await monitor.extraerVentasCajero(pg2, hoy, hoy);
     const productosRaw = await monitor.extraerVentasProducto(pg2, desde, hasta);
     const ventasHora   = await monitor.extraerVentasPorHora(pg2, desde, hasta);
-    await br2.close();
 
-    // Facturas exactas desde app.vectorpos.com.co → Caja → Historico Ventas
-    const facturas = esDiaUnico
-      ? await monitor.extraerHistoricoFacturas(desde, hasta, true)
-          .catch(e => { console.error('⚠️ Facturas caja:', e.message); return []; })
-      : [];
+    // HOY → Lista facturas sidebar POS (misma sesión)
+    // AYER/PASADO → cerrar POS primero, luego app.vectorpos.com.co
+    let facturas = [];
+    if (esDiaUnico) {
+      if (desde === hoy) {
+        facturas = await monitor.extraerFacturasConSesion(pg2, desde, true)
+          .catch(e => { console.error('⚠️ Facturas caja hoy:', e.message); return []; });
+        await br2.close();
+      } else {
+        await br2.close();
+        facturas = await monitor.extraerHistoricoFacturas(desde, hasta, true)
+          .catch(e => { console.error('⚠️ Facturas caja:', e.message); return []; });
+      }
+    } else {
+      await br2.close();
+    }
     const totalDescFacturas = facturas.reduce((s, f) => s + (f.descuento || 0), 0);
 
     // Servicios/consumibles: PREPARAC, PREP, RECARGA sola, ALCOHOL

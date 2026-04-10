@@ -1358,9 +1358,10 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
  * @returns {Promise<Array>}
  */
 /**
- * Extrae facturas del día usando una página POS ya logueada (pos.vectorpos.com.co).
- * Navegación: inicio → Caja → Historico Ventas → filtrar por fecha → leer tabla.
- * Con incluirDetalle=true abre cada factura modal para obtener items exactos.
+ * Extrae facturas de HOY usando la sesión POS ya logueada (pos.vectorpos.com.co).
+ * Ruta: BASE → click "Vender" (menú top) → click "Lista facturas" (sidebar izquierdo)
+ * Tabla: Estado(0) Factura(1) Mesa(2) Venta(3) Propina(4) Domicilio(5)
+ *        Total(6) EstadoDIAN(7) hora(8) plataforma(9) ... Cajero(11)
  */
 async function extraerFacturasConSesion(page, fecha, incluirDetalle = false) {
   const parseNum = (s) => parseInt(String(s || '0').replace(/\./g, '').replace(/[^0-9]/g, '')) || 0;
@@ -1369,49 +1370,30 @@ async function extraerFacturasConSesion(page, fecha, incluirDetalle = false) {
   );
 
   try {
-    // Volver al inicio para que el menú superior esté disponible
+    // Volver al dashboard — después de stats la página queda en URLs de reportes
     await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 15000 });
     await new Promise(r => setTimeout(r, 1500));
+    console.log(`📌 extraerFacturasConSesion URL: ${page.url()}`);
 
-    // Caja → Historico Ventas
-    await navC(['Caja', 'CAJA']);
-    await new Promise(r => setTimeout(r, 1000));
-
-    const ok = await navC([
-      'Historico Ventas', 'Histórico Ventas',
-      'Historico de Ventas', 'Histórico de Ventas',
-      'HISTORICO VENTAS',
-    ]);
-    if (!ok) {
-      console.log('⚠️ extraerFacturasConSesion: no encontró "Historico Ventas"');
-      return [];
-    }
-    console.log('✅ extraerFacturasConSesion: navegó a Historico Ventas');
+    // Click "Vender" en menú top → abre el sidebar izquierdo con "Lista facturas"
+    const vendClic = await navC(['Vender', 'VENDER']);
+    console.log(`📌 Click Vender: ${vendClic}`);
     await new Promise(r => setTimeout(r, 2000));
 
-    // Establecer filtro de fecha (si la página tiene inputs de fecha)
-    const puso = await page.evaluate((f) => {
-      const inputs = [...document.querySelectorAll('input[type="date"]')];
-      if (!inputs.length) return false;
-      const set = (inp, val) => {
-        inp.value = val;
-        inp.dispatchEvent(new Event('input',  { bubbles: true }));
-        inp.dispatchEvent(new Event('change', { bubbles: true }));
-      };
-      set(inputs[0], f);
-      if (inputs[1]) set(inputs[1], f);
-      return true;
-    }, fecha);
-
-    if (puso) {
-      // Hacer clic en "Cargar" o "Buscar"
-      await page.evaluate((fnSrc) => eval(fnSrc)(
-        ['Cargar', 'CARGAR', 'Buscar', 'BUSCAR', 'Filtrar']
-      ), _JS_FIND_AND_CLICK);
-      await new Promise(r => setTimeout(r, 3000));
+    // Click "Lista facturas" en el sidebar izquierdo
+    const listaOk = await navC(['Lista facturas', 'Lista Facturas', 'LISTA FACTURAS']);
+    console.log(`📌 Click Lista facturas: ${listaOk}`);
+    if (!listaOk) {
+      const elems = await page.evaluate(() =>
+        [...document.querySelectorAll('a,button,[onclick]')]
+          .map(e => e.innerText.trim()).filter(t => t.length > 1 && t.length < 35).slice(0, 40)
+      );
+      console.log('📌 Elementos visibles:', elems.join(' | '));
+      return [];
     }
+    console.log('✅ extraerFacturasConSesion: en Lista facturas');
 
-    // Esperar que haya filas
+    // Esperar tabla
     try {
       await page.waitForFunction(
         () => document.querySelectorAll('table tbody tr').length > 0,
@@ -1420,43 +1402,34 @@ async function extraerFacturasConSesion(page, fecha, incluirDetalle = false) {
     } catch(e) { console.log('⚠️ extraerFacturasConSesion: tabla vacía o tardó'); }
     await new Promise(r => setTimeout(r, 500));
 
-    // Leer tabla
-    // Vista filtrada: Estado(0) Factura(1) mesa(2) Venta(3) Propina(4) Domicilio(5)
-    //                 Total(6) EstadoDIAN(7) hora(8) plataforma(9) codPlataforma(10) Cajero(11)
-    // Vista sin filtrar también tiene Fecha en col 7 ("YYYY-MM-DD HH:MM:SS")
-    const filas = await page.evaluate((f) => {
+    // Leer filas: Estado(0) Factura(1) Mesa(2) Venta(3) Propina(4) Domicilio(5)
+    //             Total(6) EstadoDIAN(7) hora(8) ... Cajero(11)
+    const filas = await page.evaluate(() => {
       const rows = [];
       document.querySelectorAll('table tbody tr').forEach(tr => {
         const cells = [...tr.querySelectorAll('td')]
           .map(td => td.innerText.trim().replace(/\s+/g, ' '));
-        if (cells.length < 7 || !/^\d+$/.test(cells[1])) return;
-        // Si hay fecha en col 7 (vista sin filtrar), verificar que coincida
-        const col7 = cells[7] || '';
-        if (col7.match(/^\d{4}-\d{2}-\d{2}/) && !col7.startsWith(f)) return;
-        rows.push(cells);
+        if (cells.length >= 7 && /^\d+$/.test(cells[1])) rows.push(cells);
       });
       return rows;
-    }, fecha);
-
-    const facturasList = filas.map(cells => {
-      // Detectar si col7 tiene fecha completa o es EstadoDIAN
-      const col7 = cells[7] || '';
-      const tieneFullFecha = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(col7);
-      return {
-        factura:   cells[1],
-        mesa:      cells[2] || '',
-        venta:     parseNum(cells[3]),
-        total:     parseNum(cells[6]),
-        descuento: 0,
-        fecha,
-        hora:      tieneFullFecha ? col7.split(' ')[1] : (cells[8] || col7 || ''),
-      };
     });
 
-    console.log(`📄 Historico Ventas (${fecha}): ${facturasList.length} facturas`);
+    const facturasList = filas.map(cells => ({
+      factura:   cells[1],
+      mesa:      cells[2] || '',
+      venta:     parseNum(cells[3]),
+      total:     parseNum(cells[6]),
+      descuento: 0,
+      fecha,
+      hora:      cells[8] || '',
+    }));
 
-    if (incluirDetalle && facturasList.length > 0 && facturasList.length <= 30) {
+    console.log(`📄 Lista facturas POS (${fecha}): ${facturasList.length} facturas`);
+
+    if (incluirDetalle && facturasList.length > 0 && facturasList.length <= 50) {
       await _scrapeDetallesFacturas(page, facturasList);
+      const conItems = facturasList.filter(f => f.items?.length > 0).length;
+      console.log(`📄 Con items: ${conItems}/${facturasList.length}`);
     }
 
     return facturasList;
