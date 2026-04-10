@@ -979,12 +979,13 @@ async function reporteRango(desde, hasta, titulo) {
     const ticketsDeVentas  = ventas.reduce((s, v)  => s + v.tickets,     0);
     const totalDeProductos = prodRaw.reduce((s, p) => s + p.valor, 0);
 
-    // Facturas incluyen preparaciones+alcohol → total más fiel que el del POS
+    // prodRaw (ventas/producto) incluye TODO: productos + preparaciones + alcohol
+    // cajeros excluye servicios → da total menor al real
     const totalDeFacturas = facturas.reduce((s, f) => s + (f.total || f.venta || 0), 0);
-    const total   = totalDeFacturas  > 0 ? totalDeFacturas
-                  : totalDeCajeros   > 0 ? totalDeCajeros
-                  : totalDeVentas    > 0 ? totalDeVentas
-                  : totalDeProductos;
+    const total   = totalDeFacturas    > 0 ? totalDeFacturas
+                  : totalDeProductos   > 0 ? totalDeProductos
+                  : totalDeCajeros     > 0 ? totalDeCajeros
+                  : totalDeVentas;
     const tickets = ticketsDeCajeros > 0 ? ticketsDeCajeros : ticketsDeVentas > 0 ? ticketsDeVentas : 0;
     const haySales = total > 0;
     const medallas = ['🥇', '🥈', '🥉'];
@@ -1761,19 +1762,15 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
       const esHoy = fecha === hoy;
       msg += `📅 *${esHoy ? 'HOY' : fecha} — ${fecha}*\n\n`;
 
-      // Total real (prioridad):
-      // 1. ventas/general del POS → incluye preparaciones+alcohol, es el total definitivo
-      // 2. suma de facturas disponibles
-      // 3. cajeros (excluye servicios — puede ser menor al real)
-      // 4. productos (último recurso)
-      const totalVentasGen  = ventasGen.filter(v => v.fecha === fecha).reduce((s, v) => s + v.totalVentas, 0);
-      const totalFacturas   = facturas.reduce((s, f) => s + (f.total || f.venta || 0), 0);
-      const totalCajeros    = cajerosF.reduce((s, c) => s + c.total, 0);
-      const totalProds      = productos.reduce((s, p) => s + (p.valor || 0), 0);
-      const totalReal       = totalVentasGen > 0 ? totalVentasGen
-                            : totalFacturas  > 0 ? totalFacturas
-                            : totalCajeros   > 0 ? totalCajeros
-                            : totalProds;
+      // Total real:
+      // productosRaw incluye TODO (productos + preparaciones + alcohol) → es el total correcto.
+      // cajerosF excluye servicios (da valor menor al real) — solo como fallback.
+      const totalFacturas    = facturas.reduce((s, f) => s + (f.total || f.venta || 0), 0);
+      const totalTodosProds  = productosRaw.reduce((s, p) => s + (p.valor || 0), 0);
+      const totalCajeros     = cajerosF.reduce((s, c) => s + c.total, 0);
+      const totalReal        = totalFacturas   > 0 ? totalFacturas
+                             : totalTodosProds > 0 ? totalTodosProds
+                             : totalCajeros;
       const efectivoF    = cajerosF.reduce((s, c) => s + (c.efectivo    || 0), 0);
       const bancoF       = cajerosF.reduce((s, c) => s + (c.bancolombia || 0), 0);
       const nequiF       = cajerosF.reduce((s, c) => s + (c.nequi       || 0), 0);
