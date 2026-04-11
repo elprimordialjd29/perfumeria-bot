@@ -422,6 +422,15 @@ async function procesarMensaje(texto, esAdmin = true) {
     return await marcarContenidoDirecto(red);
   }
 
+  // ── Detección directa: ventas por período ──
+  if (/ventas?\s+(de\s+)?(este\s+)?mes/.test(tLow))                   return await ejecutarAccion('[REPORTE_MES]');
+  if (/ventas?\s+(de\s+)?(esta\s+)?semana/.test(tLow))                return await ejecutarAccion('[REPORTE_SEMANA]');
+  if (/ventas?\s+(de\s+)?hoy/.test(tLow))                             return await ejecutarAccion('[REPORTE_HOY]');
+  if (/ventas?\s+(de\s+)?ayer/.test(tLow)) {
+    const r = fechasRelativas();
+    return await ejecutarAccion(`[REPORTE_RANGO:${r.ayer}:${r.ayer}]`);
+  }
+
   // Fix [REPORTE_RANGO]: si el bot estaba esperando fechas, extráelas directamente
   const ultimoBot = [...historial].reverse().find(h => h.role === 'assistant');
   if (ultimoBot && (ultimoBot.content.includes('REPORTE_RANGO') || ultimoBot.content.includes('rango de fechas'))) {
