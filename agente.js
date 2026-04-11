@@ -1709,7 +1709,6 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
     // POS primero — cerrar antes de abrir app.vectorpos.com.co (un browser a la vez)
     const { browser: br2, page: pg2 } = await monitor.crearSesionPOS();
     const cierres      = await monitor.extraerCierresCaja(pg2, desde, hasta);
-    const ventasGen    = await monitor.extraerVentasGenerales(pg2, desde, hasta);
     const cajerosRango = await monitor.extraerVentasCajero(pg2, desde, hasta);
     const cajerosHoy   = desde === hasta && desde === hoy
       ? cajerosRango
@@ -1771,15 +1770,14 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
       const esHoy = fecha === hoy;
       msg += `📅 *${esHoy ? 'HOY' : fecha} — ${fecha}*\n\n`;
 
-      // Total real:
-      // productosRaw incluye TODO (productos + preparaciones + alcohol) → es el total correcto.
-      // cajerosF excluye servicios (da valor menor al real) — solo como fallback.
-      const totalFacturas    = facturas.reduce((s, f) => s + (f.total || f.venta || 0), 0);
-      const totalTodosProds  = productosRaw.reduce((s, p) => s + (p.valor || 0), 0);
-      const totalCajeros     = cajerosF.reduce((s, c) => s + c.total, 0);
-      const totalReal        = totalFacturas   > 0 ? totalFacturas
-                             : totalTodosProds > 0 ? totalTodosProds
-                             : totalCajeros;
+      // productosRaw (ventas/producto) incluye TODO: productos + preparaciones + alcohol = total real
+      // cajerosF excluye servicios → da valor menor ($38.750 en vez de $50.000)
+      const totalFacturas   = facturas.reduce((s, f) => s + (f.total || f.venta || 0), 0);
+      const totalTodosProds = productosRaw.reduce((s, p) => s + (p.valor || 0), 0);
+      const totalCajeros    = cajerosF.reduce((s, c) => s + c.total, 0);
+      const totalReal       = totalFacturas   > 0 ? totalFacturas
+                            : totalTodosProds > 0 ? totalTodosProds
+                            : totalCajeros;
       const efectivoF    = cajerosF.reduce((s, c) => s + (c.efectivo    || 0), 0);
       const bancoF       = cajerosF.reduce((s, c) => s + (c.bancolombia || 0), 0);
       const nequiF       = cajerosF.reduce((s, c) => s + (c.nequi       || 0), 0);
