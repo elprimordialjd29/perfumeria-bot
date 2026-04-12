@@ -522,13 +522,46 @@ async function _obtenerSaldosBrutos() {
     }
     console.log(`📌 Inventario login OK — URL: ${page.url()}`);
 
-    // Navegar a "Consultar Saldos"
-    const clickedSaldos = await page.evaluate(() => {
-      const link = [...document.querySelectorAll('a')].find(a => a.innerText.trim() === 'Consultar Saldos');
-      if (link) { link.click(); return true; }
+    // Loguear todos los links del dashboard para diagnóstico
+    const todosLinks = await page.evaluate(() =>
+      [...document.querySelectorAll('a[href]')]
+        .map(a => ({ texto: a.innerText.trim().substring(0,30), href: a.href.replace(location.origin,'') }))
+        .filter(l => l.texto.length > 1)
+        .slice(0, 40)
+    );
+    console.log('📌 Links dashboard:', JSON.stringify(todosLinks.map(l => l.texto + '→' + l.href)));
+
+    // Intentar navegar directo a la URL de inventario/saldos (varios patrones Yii2)
+    const urlsAProbar = [
+      `${APP_BASE}/?r=kardex/index`,
+      `${APP_BASE}/?r=kardex/saldos`,
+      `${APP_BASE}/?r=inventario/index`,
+      `${APP_BASE}/?r=inventario/saldos`,
+      `${APP_BASE}/?r=stock/index`,
+    ];
+
+    // Primero intentar click en menú "Kardex" o "Inventario"
+    const clickedMenu = await page.evaluate(() => {
+      const textos = ['Kardex','KARDEX','Inventario','INVENTARIO','kardex','inventario'];
+      for (const t of textos) {
+        const el = [...document.querySelectorAll('a,li,span,[onclick]')].find(e => e.innerText?.trim() === t);
+        if (el) { el.click(); return t; }
+      }
       return false;
     });
-    console.log(`📌 Click Consultar Saldos: ${clickedSaldos}`);
+    console.log(`📌 Click menú principal: ${clickedMenu}`);
+    if (clickedMenu) await new Promise(r => setTimeout(r, 1500));
+
+    // Ahora buscar "Consultar Saldos" o similar
+    const clickedSaldos = await page.evaluate(() => {
+      const textos = ['Consultar Saldos','Saldos','Saldo','Ver Saldos','Inventario','Stock','Kardex'];
+      for (const t of textos) {
+        const el = [...document.querySelectorAll('a')].find(a => a.innerText.trim() === t);
+        if (el) { el.click(); return t; }
+      }
+      return false;
+    });
+    console.log(`📌 Click submenu saldos: ${clickedSaldos}`);
     await new Promise(r => setTimeout(r, 2000));
 
     // ── Capturar TODAS las respuestas XHR/fetch para diagnóstico y datos ──
