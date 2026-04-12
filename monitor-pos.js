@@ -76,23 +76,39 @@ async function crearBrowserLogueado() {
 
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--disable-extensions',
+      '--disable-background-networking',
+      '--disable-sync',
+      '--disable-translate',
+      '--metrics-recording-only',
+      '--mute-audio',
+      '--no-first-run',
+      '--safebrowsing-disable-auto-update',
+      '--single-process',
+    ],
   });
 
   try {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    await page.setViewport({ width: 1280, height: 800 });
 
     await page.goto(BASE + '/index.php?r=site/login', {
-      waitUntil: 'networkidle0',
-      timeout: 25000,
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
     });
+    await new Promise(r => setTimeout(r, 1000));
 
-    await page.type('#txtUser', user, { delay: 40 });
-    await page.type('#txtPw', pass, { delay: 40 });
+    await page.type('#txtUser', user, { delay: 30 });
+    await page.type('#txtPw', pass, { delay: 30 });
 
     await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 25000 }),
       page.click('input[type="submit"]'),
     ]);
 
@@ -114,7 +130,7 @@ async function crearBrowserLogueado() {
 
 async function extraerVentasGenerales(page, fechaInicial, fechaFinal) {
   const url = `${BASE}/index.php?r=ventas%2Fgeneral&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}&tipo=dia`;
-  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
   const filas = await page.evaluate(() => {
     const rows = [];
@@ -156,7 +172,7 @@ async function extraerVentasGenerales(page, fechaInicial, fechaFinal) {
 
 async function extraerVentasCajero(page, fechaInicial, fechaFinal) {
   const url = `${BASE}/index.php?r=ventas%2Fcajero&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
-  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
   const filas = await page.evaluate(() => {
     const rows = [];
@@ -370,7 +386,7 @@ function calcularPromedioNecesario(totalActual) {
 
 async function extraerVentasProducto(page, fechaInicial, fechaFinal) {
   const url = `${BASE}/index.php?r=ventas%2FproductoParticipacion&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
-  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
   const filas = await page.evaluate(() => {
     const rows = [];
@@ -497,17 +513,17 @@ async function _obtenerSaldosBrutos() {
       }
     });
 
-    await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'networkidle0', timeout: 30000 });
+    await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.type('#txtEmail', user, { delay: 30 });
     await page.type('#txtClave', pass, { delay: 30 });
     await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
       page.click('#btnEntrar'),
     ]);
 
     if (page.url().includes('cambioSucursal')) {
       await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
         page.click('a,button'),
       ]);
     }
@@ -573,16 +589,16 @@ async function _obtenerCatalogoProductos() {
       }
     });
 
-    await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'networkidle0', timeout: 30000 });
+    await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.type('#txtEmail', user, { delay: 30 });
     await page.type('#txtClave', pass, { delay: 30 });
     await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
       page.click('#btnEntrar'),
     ]);
     if (page.url().includes('cambioSucursal')) {
       await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }),
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
         page.click('a,button'),
       ]);
     }
@@ -895,7 +911,7 @@ async function extraerGastos(page, fechaInicial, fechaFinal) {
   // [0] NombreProducto | [1] Valor | [2] Detalle | [3] Proveedor
   // [4] Documento | [5] Medio Pago | [6] Fecha
   const url = `${BASE}/index.php?r=compras%2Fgastos&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
-  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
   const filas = await page.evaluate(() => {
     const rows = [];
@@ -936,7 +952,7 @@ async function extraerGastos(page, fechaInicial, fechaFinal) {
 
 async function extraerCierresCaja(page, fechaInicial, fechaFinal) {
   const url = `${BASE}/index.php?r=ventas%2Fcierres&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
-  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
   const filas = await page.evaluate(() => {
     const rows = [];
@@ -966,7 +982,7 @@ async function extraerCierresCaja(page, fechaInicial, fechaFinal) {
 
 async function extraerVentasPorHora(page, fechaInicial, fechaFinal) {
   const url = `${BASE}/index.php?r=ventas%2Fhora&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
-  await page.goto(url, { waitUntil: 'networkidle0', timeout: 20000 });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
   const filas = await page.evaluate(() => {
     const rows = [];
