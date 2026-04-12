@@ -498,7 +498,9 @@ async function ejecutarAccion(rawOriginal) {
     }
 
     if (raw.startsWith('[REPORTE_MES]')) {
-      return await reporteRango(monitor.fechaInicioMes(), monitor.fechaHoy(), 'ESTE MES');
+      const datos = await monitor.monitorearVentasDiarias();
+      if (!datos) return '❌ No pude conectar a VectorPOS.';
+      return monitor.generarMensajeMeta(datos);
     }
 
     if (raw.startsWith('[REPORTE_MES_ANT]')) {
@@ -1798,7 +1800,7 @@ async function reporteCierresCaja(desde, hasta, filtroCajero = '') {
 
         if (esHoy) {
           const pct      = Math.min(100, Math.round((totalReal / metaDiaria) * 100));
-          const barra    = Math.min(Math.round(pct / 10), 10);
+          const barra    = Math.min(Math.ceil(pct / 10), 10);
           const progreso = '🟩'.repeat(barra) + '⬜'.repeat(10 - barra);
           const falta    = Math.max(0, metaDiaria - totalReal);
           msg += `🎯 *Meta del día: $${fp(metaDiaria)}*\n`;

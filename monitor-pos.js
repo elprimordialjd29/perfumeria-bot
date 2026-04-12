@@ -362,7 +362,7 @@ ${barra} ${porcentajeMeta}%
 ${rankingCajeros || '(sin datos)'}
 
 ─────────────────
-🤖 _VectorPOS Bot_`;
+🤖 _Asistente de Chu Vanegas_`;
 }
 
 // ──────────────────────────────────────────────
