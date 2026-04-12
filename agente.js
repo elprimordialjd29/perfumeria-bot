@@ -2534,6 +2534,9 @@ async function cruzarProducto(query) {
 // ──────────────────────────────────────────────
 
 async function cruceFaltantesCategorias() {
+  // Regex de servicios (no son mercancía real)
+  const esServicio = n => /^preparac|^prep\b|^recarga(\s+\d|\s*$)|^alcohol\b/i.test(n.trim());
+
   try {
     const inventario = await monitor.consultarTodoInventario() || [];
     const { browser, page } = await monitor.crearSesionPOS();
@@ -2541,26 +2544,26 @@ async function cruceFaltantesCategorias() {
     await browser.close();
 
     const fp = n => (n || 0).toLocaleString('es-CO');
+    const invDisponible = inventario.length > 0;
 
-    // Construir mapa cruzado
+    // Construir mapa cruzado — filtrar servicios
     const mapa = {};
     inventario.forEach(p => {
+      if (esServicio(p.nombre)) return;
       mapa[p.nombre] = {
         nombre: p.nombre,
-        cat: p.categoria || monitor.inferirCategoria(p.nombre, p.medida || ''),
-        stock: p.saldo,
-        medida: p.medida || '',
-        costoUnidad: p.costoUnidad || 0,
-        vendidoMes: 0, valorMes: 0,
+        cat: (p.categoria || monitor.inferirCategoria(p.nombre, p.medida || '')).toUpperCase(),
+        stock: p.saldo, medida: p.medida || '',
+        costoUnidad: p.costoUnidad || 0, vendidoMes: 0, valorMes: 0,
       };
     });
     ventasMes.forEach(p => {
+      if (esServicio(p.nombre)) return;
       if (!mapa[p.nombre]) {
         mapa[p.nombre] = {
           nombre: p.nombre,
-          cat: monitor.inferirCategoria(p.nombre, ''),
-          stock: null, medida: '', costoUnidad: 0,
-          vendidoMes: 0, valorMes: 0,
+          cat: monitor.inferirCategoria(p.nombre, '').toUpperCase(),
+          stock: null, medida: '', costoUnidad: 0, vendidoMes: 0, valorMes: 0,
         };
       }
       mapa[p.nombre].vendidoMes = p.cantidad;
@@ -2569,106 +2572,102 @@ async function cruceFaltantesCategorias() {
 
     const todos = Object.values(mapa);
 
-    // Categorías a analizar (grupo → prefijos/categorías del inventario)
+    // Grupos: 'ESENCIAS' como prefijo captura ESENCIAS M, F, U y ESENCIAS genérico
     const GRUPOS = [
-      { nombre: 'ENVASES',          cats: ['ENVASE'],                           icon: '📦' },
-      { nombre: 'ESENCIAS M',       cats: ['ESENCIAS M'],                       icon: '👔' },
-      { nombre: 'ESENCIAS F',       cats: ['ESENCIAS F'],                       icon: '👒' },
-      { nombre: 'ESENCIAS U',       cats: ['ESENCIAS U'],                       icon: '🌀' },
-      { nombre: 'RÉPLICAS 1.1',     cats: ['REPLICA 1.1'],                      icon: '🔁' },
-      { nombre: 'ORIGINALES',       cats: ['ORIGINALES'],                        icon: '⭐' },
-      { nombre: 'INSUMOS',          cats: ['INSUMOS VARIOS'],                    icon: '🧪' },
-      { nombre: 'CREMAS',           cats: ['CREMA CORPORAL'],                    icon: '🧴' },
+      { nombre: 'ENVASES',      cat: 'ENVASE',        icon: '📦' },
+      { nombre: 'ESENCIAS',     cat: 'ESENCIAS',      icon: '🌸' },
+      { nombre: 'RÉPLICAS 1.1', cat: 'REPLICA 1.1',   icon: '🔁' },
+      { nombre: 'ORIGINALES',   cat: 'ORIGINALES',    icon: '⭐' },
+      { nombre: 'INSUMOS',      cat: 'INSUMOS VARIOS',icon: '🧪' },
+      { nombre: 'CREMAS',       cat: 'CREMA CORPORAL',icon: '🧴' },
     ];
 
-    const partes = [];
+    const bloques = [];
     let resumenAlertas = '';
-    let totalDiscrepancias = 0;
+    let totalDiscrep = 0;
 
     for (const grupo of GRUPOS) {
-      const items = todos.filter(i => grupo.cats.some(c => (i.cat || '').toUpperCase().startsWith(c)));
+      const items = todos.filter(i => i.cat.startsWith(grupo.cat));
       if (!items.length) continue;
 
-      // Detectar inconsistencias
-      // Tipo 1: vendido pero no está en inventario (registro de stock = null)
-      const sinRegistro = items.filter(i => i.vendidoMes > 0 && i.stock === null);
-      // Tipo 2: vendido más de lo que hay en stock actualmente → posible pérdida o venta sin registro
-      const vendidoMayorStock = items.filter(i => i.vendidoMes > 0 && i.stock !== null && i.vendidoMes > i.stock && i.stock >= 0);
-      // Tipo 3: agotados con ventas (se vendió todo)
-      const agotadosConVentas = items.filter(i => i.stock === 0 && i.vendidoMes > 0);
+      const totalVend = items.reduce((s, i) => s + i.valorMes, 0);
+      const totalUds  = items.reduce((s, i) => s + i.vendidoMes, 0);
+      const prodVend  = items.filter(i => i.vendidoMes > 0).length;
 
-      const totalVendidoGrupo = items.reduce((s, i) => s + i.valorMes, 0);
-      const totalStockGrupo   = items.filter(i => i.stock > 0).reduce((s, i) => s + i.stock, 0);
-      const prodVendidos = items.filter(i => i.vendidoMes > 0).length;
-      const discGrupo = sinRegistro.length + vendidoMayorStock.length;
-      totalDiscrepancias += discGrupo;
+      // Solo hacer análisis de inconsistencias si inventario está disponible
+      const sinRegistro       = invDisponible ? items.filter(i => i.vendidoMes > 0 && i.stock === null) : [];
+      const vendidoMayorStock = invDisponible ? items.filter(i => i.vendidoMes > 0 && i.stock !== null && i.vendidoMes > i.stock) : [];
+      const agotados          = invDisponible ? items.filter(i => i.stock === 0 && i.vendidoMes > 0) : [];
+      const totalStk          = invDisponible ? items.filter(i => i.stock > 0).reduce((s, i) => s + i.stock, 0) : null;
+      const refConStock       = invDisponible ? items.filter(i => i.stock > 0).length : null;
 
-      let bloque = `${grupo.icon} *${grupo.nombre}*\n`;
-      bloque += `   Vendidos este mes: ${prodVendidos} ref — $${fp(totalVendidoGrupo)}\n`;
-      bloque += `   Stock actual: ${totalStockGrupo} uds en ${items.filter(i => i.stock > 0).length} ref\n`;
+      const disc = sinRegistro.length + vendidoMayorStock.length;
+      totalDiscrep += disc;
 
-      if (sinRegistro.length > 0) {
-        bloque += `   ⚠️ Sin registro en inventario (${sinRegistro.length}):\n`;
-        sinRegistro.slice(0, 5).forEach(i => {
-          bloque += `      🔴 ${i.nombre}: ${i.vendidoMes} vendidos — no aparece en stock\n`;
+      let b = `${grupo.icon} *${grupo.nombre}*\n`;
+      b += `   📈 Vendido mes: ${prodVend} ref | ${totalUds} uds | *$${fp(totalVend)}*\n`;
+
+      if (invDisponible) {
+        b += `   📦 Stock actual: ${totalStk} uds en ${refConStock} ref\n`;
+      } else {
+        b += `   📦 Stock: no disponible\n`;
+      }
+
+      // Top 5 más vendidos de la categoría
+      const top = items.filter(i => i.vendidoMes > 0).sort((a,b) => b.vendidoMes - a.vendidoMes).slice(0, 5);
+      if (top.length) {
+        top.forEach(i => {
+          const stk = i.stock !== null ? ` | stock ${i.stock}${i.medida ? ' '+i.medida : ''}` : '';
+          b += `   • ${i.nombre}: ${i.vendidoMes} vend${stk}\n`;
         });
-        if (sinRegistro.length > 5) bloque += `      _...y ${sinRegistro.length - 5} más_\n`;
       }
 
-      if (vendidoMayorStock.length > 0) {
-        bloque += `   ⚠️ Vendido > Stock actual (${vendidoMayorStock.length}):\n`;
-        vendidoMayorStock.slice(0, 5).forEach(i => {
-          const diff = i.vendidoMes - i.stock;
-          bloque += `      🟡 ${i.nombre}: vendidos ${i.vendidoMes} | stock ${i.stock} | diff +${diff}\n`;
-        });
-        if (vendidoMayorStock.length > 5) bloque += `      _...y ${vendidoMayorStock.length - 5} más_\n`;
+      if (invDisponible) {
+        if (sinRegistro.length > 0) {
+          b += `   ⚠️ Sin registro en inventario (${sinRegistro.length}):\n`;
+          sinRegistro.slice(0, 4).forEach(i => {
+            b += `      🔴 ${i.nombre}: ${i.vendidoMes} vendidos\n`;
+          });
+          if (sinRegistro.length > 4) b += `      _...y ${sinRegistro.length - 4} más_\n`;
+        }
+        if (vendidoMayorStock.length > 0) {
+          b += `   ⚠️ Vendido > Stock (${vendidoMayorStock.length}):\n`;
+          vendidoMayorStock.slice(0, 4).forEach(i => {
+            b += `      🟡 ${i.nombre}: vend ${i.vendidoMes} / stock ${i.stock} (diff ${i.vendidoMes - i.stock})\n`;
+          });
+          if (vendidoMayorStock.length > 4) b += `      _...y ${vendidoMayorStock.length - 4} más_\n`;
+        }
+        if (agotados.length > 0) {
+          b += `   🚨 Agotados: ${agotados.length} ref\n`;
+        }
+        if (disc === 0 && agotados.length === 0) b += `   ✅ Cuadra\n`;
       }
 
-      if (agotadosConVentas.length > 0 && agotadosConVentas.length <= 5) {
-        bloque += `   🚨 Agotados (vendieron todo, ${agotadosConVentas.length}):\n`;
-        agotadosConVentas.forEach(i => {
-          bloque += `      ${i.nombre}: ${i.vendidoMes} vendidos — AGOTADO\n`;
-        });
-      } else if (agotadosConVentas.length > 5) {
-        bloque += `   🚨 ${agotadosConVentas.length} productos agotados tras ventas del mes\n`;
-      }
-
-      if (discGrupo === 0 && agotadosConVentas.length === 0) {
-        bloque += `   ✅ Sin inconsistencias detectadas\n`;
-      }
-
-      partes.push(bloque);
-
-      if (discGrupo > 0) {
-        resumenAlertas += `${grupo.icon} ${grupo.nombre}: ${discGrupo} posible(s) inconsistencia(s)\n`;
-      }
+      bloques.push(b);
+      if (disc > 0) resumenAlertas += `${grupo.icon} ${grupo.nombre}: ${disc} inconsistencia(s)\n`;
     }
 
-    if (!partes.length) {
-      return '📦 Sin datos suficientes para hacer el cruce. Intenta de nuevo.';
-    }
+    if (!bloques.length) return '📦 Sin datos de ventas para hacer el cruce.';
 
     const mes = new Date().toLocaleString('es-CO', { month: 'long', year: 'numeric' });
-    let header = `🔍 *CRUCE FALTANTES POR CATEGORÍA*\n`;
-    header += `_${monitor.fechaInicioMes()} → ${monitor.fechaHoy()} — ${mes}_\n\n`;
+    let header = `🔍 *FALTANTES POR CATEGORÍA — ${mes.toUpperCase()}*\n`;
+    header += `_${monitor.fechaInicioMes()} → ${monitor.fechaHoy()}_\n`;
 
-    if (totalDiscrepancias > 0) {
-      header += `⚠️ *SE ENCONTRARON ${totalDiscrepancias} POSIBLE(S) INCONSISTENCIA(S):*\n`;
-      header += resumenAlertas + '\n';
-      header += `_Nota: "Vendido > Stock" puede significar reposición de mercancía durante el mes o faltante real._\n\n`;
+    if (!invDisponible) {
+      header += `\n⚠️ _Inventario no disponible — solo se muestran ventas._\n`;
+      header += `_Para cruce completo intenta de nuevo en 1 minuto._\n\n`;
+    } else if (totalDiscrep > 0) {
+      header += `\n⚠️ *${totalDiscrep} posible(s) inconsistencia(s):*\n${resumenAlertas}`;
+      header += `_"Vendido > Stock" puede ser reposición de mercancía o faltante real._\n\n`;
     } else {
-      header += `✅ *Sin inconsistencias graves detectadas*\n\n`;
+      header += `\n✅ *Todo cuadra — sin inconsistencias detectadas*\n\n`;
     }
 
-    // Armar mensajes finales divididos en partes
     const msgs = [];
     let actual = header;
-    for (const bloque of partes) {
-      if ((actual + bloque).length > 3800) {
-        msgs.push(actual);
-        actual = `🔍 _(continuación)_\n\n`;
-      }
-      actual += bloque + '\n';
+    for (const b of bloques) {
+      if ((actual + b).length > 3800) { msgs.push(actual); actual = `🔍 _(continuación)_\n\n`; }
+      actual += b + '\n';
     }
     actual += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
     msgs.push(actual);
