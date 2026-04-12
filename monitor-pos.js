@@ -131,6 +131,8 @@ async function crearBrowserLogueado() {
 async function extraerVentasGenerales(page, fechaInicial, fechaFinal) {
   const url = `${BASE}/index.php?r=ventas%2Fgeneral&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}&tipo=dia`;
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForFunction(() => document.querySelector('table') !== null, { timeout: 8000 }).catch(() => {});
+  await new Promise(r => setTimeout(r, 500));
 
   const filas = await page.evaluate(() => {
     const rows = [];
@@ -173,6 +175,8 @@ async function extraerVentasGenerales(page, fechaInicial, fechaFinal) {
 async function extraerVentasCajero(page, fechaInicial, fechaFinal) {
   const url = `${BASE}/index.php?r=ventas%2Fcajero&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForFunction(() => document.querySelector('table') !== null, { timeout: 8000 }).catch(() => {});
+  await new Promise(r => setTimeout(r, 500));
 
   const filas = await page.evaluate(() => {
     const rows = [];
@@ -387,6 +391,8 @@ function calcularPromedioNecesario(totalActual) {
 async function extraerVentasProducto(page, fechaInicial, fechaFinal) {
   const url = `${BASE}/index.php?r=ventas%2FproductoParticipacion&idSyA=${ID_SYA}&fechaInicial=${fechaInicial}&fechaFinal=${fechaFinal}`;
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForFunction(() => document.querySelector('table') !== null, { timeout: 8000 }).catch(() => {});
+  await new Promise(r => setTimeout(r, 500));
 
   const filas = await page.evaluate(() => {
     const rows = [];
