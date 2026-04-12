@@ -244,6 +244,9 @@ const MENU_ACCIONES = {
   '19': '[INVENTARIO_CAT:ORIGINALES]',
   '20': '[INVENTARIO_CAT:REPLICA 1.1]',
   '21': '[RESTOCK_TODO]',
+  // ── ANÁLISIS / CRUCE ──
+  '25': '[FALTANTES]',
+  '26': '[BALANCE]',
   // ── GASTOS ──
   '22': '[GASTOS]',
   // ── REDES SOCIALES ──
@@ -2863,6 +2866,14 @@ function mensajeMenu() {
     `20 · Inventario réplicas 1.1\n` +
     `21 · Restock (qué falta + costo)\n\n` +
 
+    `🔍 *ANÁLISIS / FALTANTES*\n` +
+    `25 · Faltantes de mercancía por categoría\n` +
+    `     ↳ Detecta si ventas cuadran con inventario\n` +
+    `     ↳ Envases · Esencias · Originales · Réplicas\n` +
+    `26 · Balance crítico de inventario\n` +
+    `     ↳ Productos que se van a agotar pronto\n` +
+    `     ↳ Ritmo de ventas + días estimados de stock\n\n` +
+
     `💸 *GASTOS*\n` +
     `22 · Gastos del mes\n\n` +
 
@@ -2876,12 +2887,13 @@ function mensajeMenu() {
     `E · Exportar Excel\n\n` +
 
     `💬 *Palabras rápidas:*\n` +
-    `_hoy · ayer · semana · mes · gastos · inventario · caja · cajeros · restock · redes_\n\n` +
+    `_hoy · ayer · semana · mes · gastos · inventario · caja · cajeros · restock · redes · faltantes · balance_\n\n` +
 
     `💬 *Preguntas libres:*\n` +
     `• _"cuánto vendió Michelle esta semana"_\n` +
     `• _"estado de singler color / tapa plana 50ml"_\n` +
     `• _"ventas del 1 al 15 de marzo"_\n` +
+    `• _"faltante de mercancía"_ · _"las ventas cuadran"_\n` +
     `• _"mañana"_ · _"pasado mañana"_ → contenido de redes`;
 }
 
