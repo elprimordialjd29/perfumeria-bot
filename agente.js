@@ -498,10 +498,7 @@ async function ejecutarAccion(rawOriginal) {
     }
 
     if (raw.startsWith('[REPORTE_MES]')) {
-      // Reporte mensual completo con barra de meta
-      const datos = await monitor.monitorearVentasDiarias();
-      if (!datos) return '❌ No pude conectar a VectorPOS.';
-      return monitor.generarMensajeMeta(datos);
+      return await reporteRango(monitor.fechaInicioMes(), monitor.fechaHoy(), 'ESTE MES');
     }
 
     if (raw.startsWith('[REPORTE_MES_ANT]')) {
