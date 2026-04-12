@@ -393,6 +393,10 @@ async function procesarMensaje(texto, esAdmin = true) {
 
   // ── Detección directa: checklist de contenido ──
 
+  // "plan de redes la otra semana / próxima semana / siguiente semana"
+  if (/plan.*redes.*(otra|pr[oó]xima|siguiente)\s+semana|(otra|pr[oó]xima|siguiente)\s+semana.*redes/.test(tLow)) {
+    return await planContenidoSemana(7);
+  }
   // "redes sociales para esta semana" / "plan de redes" → PLAN con copies
   if (/redes\s+sociales|plan.*redes|redes.*semana/.test(tLow)) {
     return await planContenidoSemana();
@@ -1199,12 +1203,12 @@ function quitarPrecios(texto) {
     .trim();
 }
 
-async function planContenidoSemana() {
+async function planContenidoSemana(offsetDias = 0) {
   const contenido = require('./contenido');
   const hoy = new Date();
   const diaSemana = hoy.getDay();
   const diasDesdelunes = diaSemana === 0 ? 6 : diaSemana - 1;
-  const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - diasDesdelunes);
+  const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - diasDesdelunes + offsetDias);
   const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
 
   const fmt = d => d.toISOString().split('T')[0];

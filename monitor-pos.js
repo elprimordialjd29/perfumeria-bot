@@ -89,7 +89,6 @@ async function crearBrowserLogueado() {
       '--mute-audio',
       '--no-first-run',
       '--safebrowsing-disable-auto-update',
-      '--single-process',
     ],
   });
 
