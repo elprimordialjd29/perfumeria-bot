@@ -505,19 +505,7 @@ async function _obtenerSaldosBrutos() {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
 
-    let saldosData = null;
-    let productosData = null;
-    page.on('response', async res => {
-      const url = res.url();
-      if (url.includes('kardex/saldos')) {
-        try { saldosData = JSON.parse(await res.text()); } catch(e) {}
-      }
-      // Capturar catálogo de productos (endpoint con nombre, categoría, costo)
-      if (url.includes('producto') && url.includes('lista') || url.includes('catalogo') || url.includes('inventario/producto')) {
-        try { const d = JSON.parse(await res.text()); if (d?.datos || Array.isArray(d)) productosData = d?.datos || d; } catch(e) {}
-      }
-    });
-
+    // Login
     await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.type('#txtEmail', user, { delay: 30 });
     await page.type('#txtClave', pass, { delay: 30 });
@@ -532,29 +520,69 @@ async function _obtenerSaldosBrutos() {
         page.click('a,button'),
       ]);
     }
+    console.log(`📌 Inventario login OK — URL: ${page.url()}`);
 
-    await page.evaluate(() => {
+    // Navegar a "Consultar Saldos"
+    const clickedSaldos = await page.evaluate(() => {
       const link = [...document.querySelectorAll('a')].find(a => a.innerText.trim() === 'Consultar Saldos');
-      if (link) link.click();
+      if (link) { link.click(); return true; }
+      return false;
     });
+    console.log(`📌 Click Consultar Saldos: ${clickedSaldos}`);
     await new Promise(r => setTimeout(r, 2000));
 
-    await page.evaluate(() => {
+    // Preparar waitForResponse ANTES de clickar Cargar
+    const saldosResponsePromise = page.waitForResponse(
+      r => r.url().includes('kardex/saldos') && r.status() === 200,
+      { timeout: 20000 }
+    ).catch(e => { console.log('⚠️ waitForResponse kardex/saldos timeout:', e.message); return null; });
+
+    // Click en botón Cargar
+    const clickedCargar = await page.evaluate(() => {
       const btn = document.querySelector('#btnCargar');
-      if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      if (btn) { btn.dispatchEvent(new MouseEvent('click', { bubbles: true })); return true; }
+      // Fallback: buscar botón con texto "Cargar"
+      const btns = [...document.querySelectorAll('button,input[type=button],[onclick]')];
+      const cargar = btns.find(b => (b.innerText || b.value || '').trim().toLowerCase().includes('cargar'));
+      if (cargar) { cargar.click(); return 'fallback'; }
+      return false;
     });
-    await new Promise(r => setTimeout(r, 5000));
+    console.log(`📌 Click Cargar: ${clickedCargar}`);
+
+    // Esperar la respuesta XHR
+    const saldosResponse = await saldosResponsePromise;
+    let saldos = [];
+
+    if (saldosResponse) {
+      try {
+        const data = await saldosResponse.json();
+        saldos = data?.datos?.length ? data.datos : (Array.isArray(data) ? data : []);
+        console.log(`✅ kardex/saldos capturado: ${saldos.length} registros`);
+        if (saldos[0]) console.log('📋 Campos:', Object.keys(saldos[0]).join(', '));
+      } catch(e) {
+        console.error('❌ Error parseando kardex/saldos:', e.message);
+      }
+    } else {
+      // Fallback: esperar 4s más y leer desde el DOM si hay tabla
+      await new Promise(r => setTimeout(r, 4000));
+      console.log('⚠️ kardex/saldos no capturado vía XHR — intentando DOM...');
+      saldos = await page.evaluate(() => {
+        const rows = [];
+        document.querySelectorAll('table tbody tr').forEach(tr => {
+          const cells = [...tr.querySelectorAll('td')].map(td => td.innerText.trim());
+          if (cells.length >= 3 && cells[0]) rows.push({ Nombre: cells[0], 'Saldo Actual': cells[1] || '0', Medida: cells[2] || '' });
+        });
+        return rows;
+      });
+      console.log(`📋 DOM fallback: ${saldos.length} filas`);
+    }
 
     await browser.close();
     browser = null;
-
-    const saldos = saldosData?.datos?.length ? saldosData.datos : [];
-    // Loguear campos disponibles para diagnóstico
-    if (saldos[0]) console.log('📋 Campos saldo:', Object.keys(saldos[0]).join(', '));
-    return saldos;
+    return saldos.length ? saldos : [];
   } catch (e) {
     console.error('❌ Error obteniendo saldos inventario:', e.message);
-    if (browser) await browser.close();
+    if (browser) await browser.close().catch(() => {});
     return null;
   }
 }
