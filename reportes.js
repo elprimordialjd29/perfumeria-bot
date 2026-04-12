@@ -73,6 +73,12 @@ function iniciar(bot) {
     await enviarRecordatorioContenido('tiktok');
   }, { timezone: 'America/Bogota' });
 
+  // ── Balance crítico de inventario: 6:00 PM diario ──
+  cron.schedule('0 18 * * *', async () => {
+    console.log('⚡ Verificando balance crítico de inventario...');
+    await verificarBalanceCritico();
+  }, { timezone: 'America/Bogota' });
+
   console.log('✅ Reportes automáticos activados:');
   console.log('   🌅 Matutino (ayer + mes + inventario): 7:30 AM diario');
   console.log('   🌞 Mediodía: 12:00 PM diario');
@@ -82,6 +88,24 @@ function iniciar(bot) {
   console.log('   📱 Recordatorio WhatsApp: 8:00 AM diario');
   console.log('   📸 Recordatorio Instagram: 8:30 AM lun/mié/vie/dom');
   console.log('   🎵 Recordatorio TikTok: 8:30 AM mar/jue/sáb');
+  console.log('   ⚡ Balance crítico inventario: 6:00 PM diario');
+}
+
+// ──────────────────────────────────────────────
+// BALANCE CRÍTICO — alerta automática 6 PM
+// ──────────────────────────────────────────────
+
+async function verificarBalanceCritico() {
+  try {
+    const msg = await monitor.reporteBalanceCritico({ soloSiHayCriticos: true });
+    if (!msg) {
+      console.log('✅ Balance inventario OK — sin críticos a las 6 PM');
+      return;
+    }
+    await notificar('⚡ Alerta inventario crítico', msg);
+  } catch(e) {
+    console.error('Error verificarBalanceCritico:', e.message);
+  }
 }
 
 // ──────────────────────────────────────────────

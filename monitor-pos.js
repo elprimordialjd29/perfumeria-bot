@@ -1368,6 +1368,138 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
   }
 }
 
+// ──────────────────────────────────────────────
+// BALANCE CRÍTICO — Velocidad de rotación de inventario
+// ──────────────────────────────────────────────
+
+/**
+ * Calcula la velocidad de rotación de cada producto y retorna los que
+ * se agotarán pronto dado el ritmo de ventas actual del mes.
+ *
+ * @param {Array} inventario  — resultado de consultarTodoInventario()
+ * @param {Array} ventasMes   — resultado de extraerVentasProducto()
+ * @param {number} diasTranscurridos  — días del mes ya transcurridos
+ * @returns {Array} items enriquecidos con { tasaDiaria, diasParaAgotarse, urgencia }
+ */
+function calcularVelocidadInventario(inventario, ventasMes, diasTranscurridos) {
+  const dias = Math.max(1, diasTranscurridos);
+
+  // Mapa inventario
+  const mapa = {};
+  inventario.forEach(p => {
+    mapa[p.nombre] = {
+      nombre: p.nombre,
+      categoria: p.categoria || '',
+      stock: p.saldo,
+      medida: p.medida || '',
+      costoUnidad: p.costoUnidad || 0,
+      vendidoMes: 0,
+      valorMes: 0,
+    };
+  });
+
+  // Agregar ventas
+  ventasMes.forEach(p => {
+    if (!mapa[p.nombre]) {
+      mapa[p.nombre] = { nombre: p.nombre, categoria: '', stock: null, medida: '', costoUnidad: 0, vendidoMes: 0, valorMes: 0 };
+    }
+    mapa[p.nombre].vendidoMes = p.cantidad;
+    mapa[p.nombre].valorMes   = p.valor;
+  });
+
+  // Calcular velocidad por producto
+  return Object.values(mapa).map(item => {
+    const tasaDiaria = item.vendidoMes > 0 ? item.vendidoMes / dias : 0;
+    const diasParaAgotarse = (item.stock > 0 && tasaDiaria > 0)
+      ? Math.round(item.stock / tasaDiaria)
+      : null;
+
+    let urgencia = 'ok'; // ok | advertencia | alerta | critico | agotado
+    if (item.stock !== null && item.stock <= 0) urgencia = 'agotado';
+    else if (diasParaAgotarse !== null) {
+      if (diasParaAgotarse <= 5)  urgencia = 'critico';
+      else if (diasParaAgotarse <= 10) urgencia = 'alerta';
+      else if (diasParaAgotarse <= 20) urgencia = 'advertencia';
+    }
+
+    return { ...item, tasaDiaria, diasParaAgotarse, urgencia };
+  });
+}
+
+/**
+ * Genera un reporte de balance crítico: productos con velocidad de venta alta
+ * que se agotarán pronto. Si soloSiHayCriticos=true y no hay críticos, retorna null.
+ *
+ * @param {{ soloSiHayCriticos?: boolean }} opciones
+ * @returns {Promise<string|null>}
+ */
+async function reporteBalanceCritico({ soloSiHayCriticos = false } = {}) {
+  try {
+    const hoyDate = new Date(Date.now() - 5 * 60 * 60 * 1000); // UTC-5 Colombia
+    const inicioMes = new Date(Date.UTC(hoyDate.getUTCFullYear(), hoyDate.getUTCMonth(), 1));
+    const diasTranscurridos = Math.max(1, Math.floor((hoyDate - inicioMes) / 86400000) + 1);
+
+    const inventario = await consultarTodoInventario() || [];
+
+    const { browser, page } = await crearSesionPOS();
+    const ventasMes = await extraerVentasProducto(page, fechaInicioMes(), fechaHoy());
+    await browser.close();
+
+    const items = calcularVelocidadInventario(inventario, ventasMes, diasTranscurridos);
+
+    // Filtrar por urgencia (solo los que tienen riesgo real de agotarse)
+    const ORDENES = { agotado: 0, critico: 1, alerta: 2, advertencia: 3 };
+    const criticos = items
+      .filter(i => i.urgencia !== 'ok' && (i.vendidoMes > 0 || i.stock === 0))
+      .sort((a, b) => (ORDENES[a.urgencia] ?? 9) - (ORDENES[b.urgencia] ?? 9));
+
+    if (!criticos.length) {
+      if (soloSiHayCriticos) return null;
+      return '✅ *Balance de inventario OK*\n\nNingún producto está en riesgo de agotarse pronto al ritmo de ventas actual.\n\n🤖 _Asistente de Chu Vanegas_';
+    }
+
+    const iconUrg = { agotado: '🚨', critico: '⚡', alerta: '🔴', advertencia: '🟡' };
+    const fp = n => (n || 0).toLocaleString('es-CO');
+
+    const mes = hoyDate.toLocaleString('es-CO', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    let msg = `⚡ *BALANCE CRÍTICO — ${mes.toUpperCase()}*\n`;
+    msg += `_Productos en riesgo de agotarse según ritmo actual_\n`;
+    msg += `_Día ${diasTranscurridos} del mes analizado_\n\n`;
+
+    criticos.forEach(item => {
+      const ico = iconUrg[item.urgencia] || '🟡';
+      const stockLabel = item.stock !== null ? `${item.stock} ${item.medida}` : '?';
+      const diasLabel  = item.diasParaAgotarse !== null
+        ? (item.diasParaAgotarse <= 0 ? 'AGOTADO' : `~${item.diasParaAgotarse} días restantes`)
+        : (item.stock === 0 ? 'AGOTADO' : '—');
+
+      msg += `${ico} *${item.nombre}*\n`;
+      msg += `   📦 Stock: ${stockLabel}`;
+      if (item.costoUnidad > 0) msg += ` | $${fp(item.costoUnidad)}/u`;
+      msg += `\n`;
+      msg += `   📈 Vendido: ${item.vendidoMes} uds (mes) | Ritmo: ${item.tasaDiaria.toFixed(1)}/día\n`;
+      msg += `   ⏳ Tiempo estimado: *${diasLabel}*\n\n`;
+    });
+
+    const agotados    = criticos.filter(i => i.urgencia === 'agotado').length;
+    const criticosCnt = criticos.filter(i => i.urgencia === 'critico').length;
+    const alertaCnt   = criticos.filter(i => i.urgencia === 'alerta').length;
+    const advertCnt   = criticos.filter(i => i.urgencia === 'advertencia').length;
+
+    msg += `📊 Resumen: `;
+    if (agotados)    msg += `${agotados} agotados  `;
+    if (criticosCnt) msg += `${criticosCnt} críticos (≤5d)  `;
+    if (alertaCnt)   msg += `${alertaCnt} en alerta (≤10d)  `;
+    if (advertCnt)   msg += `${advertCnt} advertencias (≤20d)`;
+    msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+
+    return msg;
+  } catch(e) {
+    console.error('Error reporteBalanceCritico:', e.message);
+    return null;
+  }
+}
+
 /**
  * Extrae facturas del día usando una página POS ya logueada (pos.vectorpos.com.co).
  * Navega a Vender → Lista facturas dentro de la misma sesión — sin abrir nuevo browser.
@@ -1486,4 +1618,6 @@ module.exports = {
   obtenerCategoriaProductos,
   extraerHistoricoFacturas,
   extraerFacturasConSesion,
+  calcularVelocidadInventario,
+  reporteBalanceCritico,
 };

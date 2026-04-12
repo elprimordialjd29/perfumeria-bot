@@ -81,6 +81,8 @@ Tu respuesta debe COMENZAR con la etiqueta, nada antes.
 [RESTOCK_TODO]      → todo el restock, restock completo, todos los bajos, cuánto costaría reponer todo, inversión total para restock
 [INVENTARIO_TODO]   → todo el inventario, inventario completo, todos los productos con su stock, estock total
 [VENTAS_INVENTARIO] → reporte completo ventas vs inventario de TODOS los productos: stock actual + vendido este mes, ordenado por más vendido
+[FALTANTES]         → cruce ventas vs inventario POR CATEGORÍA (envases, esencias, originales, réplicas, insumos). Detecta inconsistencias: productos vendidos que no aparecen en inventario, vendido > stock actual (posible faltante/pérdida). Úsalo cuando pregunten por faltantes de mercancía, si las ventas cuadran, si se está perdiendo mercancía, si los envases/esencias/originales cuadran
+[BALANCE]           → balance crítico de inventario: productos que se van a agotar pronto según ritmo actual de ventas. Úsalo cuando pregunten cuánto dura el stock, qué se va a acabar, alertas de velocidad, qué reponer urgente
 [CRUCE_PRODUCTO:texto] → cruce ventas+inventario de UN producto este mes y hoy. Extrae el término clave. Ej: "cuánto queda de tapa plana 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml] | "single color" → [CRUCE_PRODUCTO:singler color] | "tapa plana 50ml vendido y stock" → [CRUCE_PRODUCTO:tapa plana 50ml]
 [CRUCE_PRODUCTO_RANGO:texto:YYYY-MM-DD:YYYY-MM-DD] → cuánto se vendió de un producto en un período específico + stock actual. Convierte fechas relativas a YYYY-MM-DD. Ej:
   "cuánto se vendió de singler color ayer" → [CRUCE_PRODUCTO_RANGO:singler color:AYER:AYER]
@@ -156,6 +158,19 @@ Responde directamente SOLO para:
 "ventas vs inventario de todo" → [VENTAS_INVENTARIO]
 "dame el estado del inventario" → [VENTAS_INVENTARIO]
 "estado del inventario" → [VENTAS_INVENTARIO]
+"ventas vs inventario" → [VENTAS_INVENTARIO]
+"cuadra el inventario" → [FALTANTES]
+"faltante de mercancía" → [FALTANTES]
+"falta de envases" → [FALTANTES]
+"falta de esencias" → [FALTANTES]
+"falta de originales" → [FALTANTES]
+"se está perdiendo mercancía" → [FALTANTES]
+"las ventas cuadran" → [FALTANTES]
+"balance" → [BALANCE]
+"balance crítico" → [BALANCE]
+"qué se va a acabar" → [BALANCE]
+"pérdidas potenciales" → [BALANCE]
+"qué debo reponer urgente" → [BALANCE]
 "cuántas unidades de Lattafa quedan" → [CRUCE_PRODUCTO:lattafa]
 "tapa plana de 10ml" → [CRUCE_PRODUCTO:tapa plana 10ml]
 "single color" → [CRUCE_PRODUCTO:singler color]
@@ -362,6 +377,8 @@ async function procesarMensaje(texto, esAdmin = true) {
     'replicas':   '[INVENTARIO_CAT:REPLICA 1.1]',
     'réplicas':   '[INVENTARIO_CAT:REPLICA 1.1]',
     'redes':      '[CONTENIDO_HOY]',
+    'balance':    '[BALANCE]',
+    'faltantes':  '[FALTANTES]',
   };
   if (palabrasRapidas[tLow]) {
     const accion = palabrasRapidas[tLow];
@@ -433,6 +450,19 @@ async function procesarMensaje(texto, esAdmin = true) {
   if (/ventas?\s+(de\s+)?ayer/.test(tLow)) {
     const r = fechasRelativas();
     return await ejecutarAccion(`[REPORTE_RANGO:${r.ayer}:${r.ayer}]`);
+  }
+
+  // ── Detección directa: cruce ventas vs inventario / faltantes ──
+  if (/ventas?\s*(vs?\.?\s*|versus\s*|contra\s*)inventario|cruce.*inventario|inventario.*ventas|cuadra.*inventario|inventario.*cuadra/.test(tLow)) {
+    return await ejecutarAccion('[VENTAS_INVENTARIO]');
+  }
+  if (/faltante.*mercanc[ií]a|mercanc[ií]a.*faltante|se.*perdi[oó].*mercanc[ií]a|p[eé]rdida.*mercanc[ií]a|falta.*envase|falta.*esencia|falta.*original|cuadra.*ventas|ventas.*cuadra/.test(tLow)) {
+    return await cruceFaltantesCategorias();
+  }
+
+  // ── Detección directa: balance crítico / inventario urgente ──
+  if (/^balance$|balance\s+(cr[ií]tico|inventario|total)|faltantes?\s+cr[ií]ticos?|p[eé]rdidas?\s+potenciales?|qu[eé]\s+se\s+va\s+a?\s+acabar|alertas?\s+de\s+velocidad|reponer\s+urgente/.test(tLow)) {
+    return await ejecutarAccion('[BALANCE]');
   }
 
   // Fix [REPORTE_RANGO]: si el bot estaba esperando fechas, extráelas directamente
@@ -647,6 +677,14 @@ async function ejecutarAccion(rawOriginal) {
 
     if (raw.startsWith('[VENTAS_INVENTARIO]')) {
       return await reporteVentasVsInventario();
+    }
+
+    if (raw.startsWith('[FALTANTES]')) {
+      return await cruceFaltantesCategorias();
+    }
+
+    if (raw.startsWith('[BALANCE]')) {
+      return await balanceCritico();
     }
 
     if (raw.startsWith('[RESTOCK_TODO]')) {
@@ -2233,17 +2271,46 @@ async function reporteVentasVsInventario() {
     const totalStockVal = items.reduce((s, i) => s + (i.costoTotal || 0), 0);
     const mes = new Date().toLocaleString('es-CO', { month: 'long', year: 'numeric' });
 
+    // Cálculo de velocidad de rotación
+    const hoyD2 = ahoraColombia();
+    const inicioMesD2 = new Date(Date.UTC(hoyD2.getUTCFullYear(), hoyD2.getUTCMonth(), 1));
+    const diasTransc2 = Math.max(1, Math.floor((hoyD2 - inicioMesD2) / 86400000) + 1);
+
+    // Sección de alertas críticas al tope
+    const ORDENES2 = { agotado: 0, critico: 1, alerta: 2 };
+    const criticos2 = items
+      .map(item => {
+        const tasa = item.vendidoMes > 0 ? item.vendidoMes / diasTransc2 : 0;
+        const dias = (item.stock > 0 && tasa > 0) ? Math.round(item.stock / tasa) : null;
+        let urg = 'ok';
+        if (item.stock !== null && item.stock <= 0 && item.vendidoMes > 0) urg = 'agotado';
+        else if (dias !== null && dias <= 5)  urg = 'critico';
+        else if (dias !== null && dias <= 10) urg = 'alerta';
+        return { ...item, tasaDiaria: tasa, diasParaAgotarse: dias, urgencia: urg };
+      })
+      .filter(i => i.urgencia !== 'ok')
+      .sort((a, b) => (ORDENES2[a.urgencia] ?? 9) - (ORDENES2[b.urgencia] ?? 9));
+
     // Construir líneas individuales
     const lineas = [];
     items.forEach(item => {
+      const tasa = item.vendidoMes > 0 ? item.vendidoMes / diasTransc2 : 0;
+      const diasAgotar = (item.stock > 0 && tasa > 0) ? Math.round(item.stock / tasa) : null;
       const nivelStock = item.stock === null ? '❔' :
         item.stock <= 0  ? '🚨' : item.stock <= 5 ? '🔴' : item.stock <= 20 ? '🟡' : '🟢';
+      const velLabel = diasAgotar !== null
+        ? (diasAgotar <= 5  ? ` ⚡~${diasAgotar}d`
+        :  diasAgotar <= 10 ? ` 🔴~${diasAgotar}d`
+        :  diasAgotar <= 20 ? ` 🟡~${diasAgotar}d` : '')
+        : '';
+
       let bloque = `▪️ *${item.nombre}*\n`;
       bloque += `   📈 Vendido: ${item.vendidoMes} uds`;
       if (item.valorMes > 0) bloque += ` — $${item.valorMes.toLocaleString('es-CO')}`;
+      if (tasa > 0) bloque += ` | ⏱${tasa.toFixed(1)}/d`;
       bloque += `\n`;
       if (item.stock !== null) {
-        bloque += `   ${nivelStock} Stock: ${item.stock} ${item.medida}`;
+        bloque += `   ${nivelStock} Stock: ${item.stock} ${item.medida}${velLabel}`;
         if (item.costoUnidad > 0) bloque += ` | 💵 $${item.costoUnidad.toLocaleString('es-CO')}/u`;
         if (item.costoTotal  > 0) bloque += ` | Total: $${item.costoTotal.toLocaleString('es-CO')}`;
         bloque += `\n`;
@@ -2251,8 +2318,22 @@ async function reporteVentasVsInventario() {
       lineas.push(bloque);
     });
 
+    // Sección alerta crítica al inicio
+    let seccionCritica = '';
+    if (criticos2.length > 0) {
+      const iconUrg2 = { agotado: '🚨', critico: '⚡', alerta: '🔴' };
+      seccionCritica += `\n⚠️ *ATENCIÓN — ${criticos2.length} producto(s) se agotan pronto:*\n`;
+      criticos2.forEach(i => {
+        const ico = iconUrg2[i.urgencia] || '🔴';
+        const d   = i.diasParaAgotarse;
+        const lab = i.urgencia === 'agotado' ? 'AGOTADO' : d !== null ? `~${d} días` : '?';
+        seccionCritica += `${ico} *${i.nombre}*: stock ${i.stock} ${i.medida} → *${lab}*\n`;
+      });
+      seccionCritica += '\n';
+    }
+
     // Dividir en partes de máx 3500 chars
-    const encabezado = `📦 *VENTAS VS INVENTARIO — ${mes.toUpperCase()}*\n_${monitor.fechaInicioMes()} → ${monitor.fechaHoy()}_\n_(${items.length} productos)_\n\n`;
+    const encabezado = `📦 *VENTAS VS INVENTARIO — ${mes.toUpperCase()}*\n_${monitor.fechaInicioMes()} → ${monitor.fechaHoy()}_\n_(${items.length} productos)_\n${seccionCritica}\n`;
     let pie = `\n💰 *Total vendido: $${totalVendido.toLocaleString('es-CO')}*\n`;
     if (totalStockVal > 0) pie += `🏦 Valor total en stock: $${totalStockVal.toLocaleString('es-CO')}\n`;
     pie += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
@@ -2389,14 +2470,28 @@ async function cruzarProducto(query) {
 
     const items = Object.values(mapa).sort((a, b) => (b.vendidoMes - a.vendidoMes) || (b.stock - a.stock));
 
+    // Cálculo de velocidad de rotación
+    const hoyD = ahoraColombia();
+    const inicioMesD = new Date(Date.UTC(hoyD.getUTCFullYear(), hoyD.getUTCMonth(), 1));
+    const diasTranscurridos = Math.max(1, Math.floor((hoyD - inicioMesD) / 86400000) + 1);
+
     let msg = `🔍 *ANÁLISIS — "${query.toUpperCase()}"*\n`;
-    msg += `_Ventas del mes + stock actual_\n\n`;
+    msg += `_Ventas del mes + stock actual + proyección_\n\n`;
 
     items.forEach(item => {
       const nivelStock = item.stock === null ? '' :
         item.stock <= 0    ? ' 🚨 *AGOTADO*' :
         item.stock <= 5    ? ' 🔴 CRÍTICO' :
         item.stock <= 20   ? ' 🟡 BAJO' : ' 🟢';
+
+      const tasaDiaria = item.vendidoMes > 0 ? item.vendidoMes / diasTranscurridos : 0;
+      const diasParaAgotarse = (item.stock > 0 && tasaDiaria > 0)
+        ? Math.round(item.stock / tasaDiaria) : null;
+      const alertaVel = diasParaAgotarse !== null
+        ? (diasParaAgotarse <= 5  ? ` ⚡ se agota en ~${diasParaAgotarse} días`
+        :  diasParaAgotarse <= 10 ? ` 🔴 ~${diasParaAgotarse} días restantes`
+        :  diasParaAgotarse <= 20 ? ` 🟡 ~${diasParaAgotarse} días restantes`
+        : '') : '';
 
       msg += `📦 *${item.nombre}*\n`;
 
@@ -2408,6 +2503,7 @@ async function cruzarProducto(query) {
 
       if (item.vendidoMes > 0) {
         msg += `   📈 Vendido (mes): ${item.vendidoMes} uds — $${item.valorMes.toLocaleString('es-CO')}\n`;
+        msg += `   ⏱ Ritmo: ${tasaDiaria.toFixed(1)}/día${alertaVel}\n`;
       } else {
         msg += `   📈 Sin ventas este mes\n`;
       }
@@ -2425,6 +2521,174 @@ async function cruzarProducto(query) {
   } catch(e) {
     console.error('Error cruce producto:', e.message);
     return '❌ No pude cruzar los datos. Intenta de nuevo.';
+  }
+}
+
+// ──────────────────────────────────────────────
+// CRUCE FALTANTES POR CATEGORÍA
+// Muestra ventas vs stock por cada categoría clave
+// y detecta inconsistencias (vendido > stock, no en inventario)
+// ──────────────────────────────────────────────
+
+async function cruceFaltantesCategorias() {
+  try {
+    const inventario = await monitor.consultarTodoInventario() || [];
+    const { browser, page } = await monitor.crearSesionPOS();
+    const ventasMes = await monitor.extraerVentasProducto(page, monitor.fechaInicioMes(), monitor.fechaHoy());
+    await browser.close();
+
+    const fp = n => (n || 0).toLocaleString('es-CO');
+
+    // Construir mapa cruzado
+    const mapa = {};
+    inventario.forEach(p => {
+      mapa[p.nombre] = {
+        nombre: p.nombre,
+        cat: p.categoria || monitor.inferirCategoria(p.nombre, p.medida || ''),
+        stock: p.saldo,
+        medida: p.medida || '',
+        costoUnidad: p.costoUnidad || 0,
+        vendidoMes: 0, valorMes: 0,
+      };
+    });
+    ventasMes.forEach(p => {
+      if (!mapa[p.nombre]) {
+        mapa[p.nombre] = {
+          nombre: p.nombre,
+          cat: monitor.inferirCategoria(p.nombre, ''),
+          stock: null, medida: '', costoUnidad: 0,
+          vendidoMes: 0, valorMes: 0,
+        };
+      }
+      mapa[p.nombre].vendidoMes = p.cantidad;
+      mapa[p.nombre].valorMes   = p.valor;
+    });
+
+    const todos = Object.values(mapa);
+
+    // Categorías a analizar (grupo → prefijos/categorías del inventario)
+    const GRUPOS = [
+      { nombre: 'ENVASES',          cats: ['ENVASE'],                           icon: '📦' },
+      { nombre: 'ESENCIAS M',       cats: ['ESENCIAS M'],                       icon: '👔' },
+      { nombre: 'ESENCIAS F',       cats: ['ESENCIAS F'],                       icon: '👒' },
+      { nombre: 'ESENCIAS U',       cats: ['ESENCIAS U'],                       icon: '🌀' },
+      { nombre: 'RÉPLICAS 1.1',     cats: ['REPLICA 1.1'],                      icon: '🔁' },
+      { nombre: 'ORIGINALES',       cats: ['ORIGINALES'],                        icon: '⭐' },
+      { nombre: 'INSUMOS',          cats: ['INSUMOS VARIOS'],                    icon: '🧪' },
+      { nombre: 'CREMAS',           cats: ['CREMA CORPORAL'],                    icon: '🧴' },
+    ];
+
+    const partes = [];
+    let resumenAlertas = '';
+    let totalDiscrepancias = 0;
+
+    for (const grupo of GRUPOS) {
+      const items = todos.filter(i => grupo.cats.some(c => (i.cat || '').toUpperCase().startsWith(c)));
+      if (!items.length) continue;
+
+      // Detectar inconsistencias
+      // Tipo 1: vendido pero no está en inventario (registro de stock = null)
+      const sinRegistro = items.filter(i => i.vendidoMes > 0 && i.stock === null);
+      // Tipo 2: vendido más de lo que hay en stock actualmente → posible pérdida o venta sin registro
+      const vendidoMayorStock = items.filter(i => i.vendidoMes > 0 && i.stock !== null && i.vendidoMes > i.stock && i.stock >= 0);
+      // Tipo 3: agotados con ventas (se vendió todo)
+      const agotadosConVentas = items.filter(i => i.stock === 0 && i.vendidoMes > 0);
+
+      const totalVendidoGrupo = items.reduce((s, i) => s + i.valorMes, 0);
+      const totalStockGrupo   = items.filter(i => i.stock > 0).reduce((s, i) => s + i.stock, 0);
+      const prodVendidos = items.filter(i => i.vendidoMes > 0).length;
+      const discGrupo = sinRegistro.length + vendidoMayorStock.length;
+      totalDiscrepancias += discGrupo;
+
+      let bloque = `${grupo.icon} *${grupo.nombre}*\n`;
+      bloque += `   Vendidos este mes: ${prodVendidos} ref — $${fp(totalVendidoGrupo)}\n`;
+      bloque += `   Stock actual: ${totalStockGrupo} uds en ${items.filter(i => i.stock > 0).length} ref\n`;
+
+      if (sinRegistro.length > 0) {
+        bloque += `   ⚠️ Sin registro en inventario (${sinRegistro.length}):\n`;
+        sinRegistro.slice(0, 5).forEach(i => {
+          bloque += `      🔴 ${i.nombre}: ${i.vendidoMes} vendidos — no aparece en stock\n`;
+        });
+        if (sinRegistro.length > 5) bloque += `      _...y ${sinRegistro.length - 5} más_\n`;
+      }
+
+      if (vendidoMayorStock.length > 0) {
+        bloque += `   ⚠️ Vendido > Stock actual (${vendidoMayorStock.length}):\n`;
+        vendidoMayorStock.slice(0, 5).forEach(i => {
+          const diff = i.vendidoMes - i.stock;
+          bloque += `      🟡 ${i.nombre}: vendidos ${i.vendidoMes} | stock ${i.stock} | diff +${diff}\n`;
+        });
+        if (vendidoMayorStock.length > 5) bloque += `      _...y ${vendidoMayorStock.length - 5} más_\n`;
+      }
+
+      if (agotadosConVentas.length > 0 && agotadosConVentas.length <= 5) {
+        bloque += `   🚨 Agotados (vendieron todo, ${agotadosConVentas.length}):\n`;
+        agotadosConVentas.forEach(i => {
+          bloque += `      ${i.nombre}: ${i.vendidoMes} vendidos — AGOTADO\n`;
+        });
+      } else if (agotadosConVentas.length > 5) {
+        bloque += `   🚨 ${agotadosConVentas.length} productos agotados tras ventas del mes\n`;
+      }
+
+      if (discGrupo === 0 && agotadosConVentas.length === 0) {
+        bloque += `   ✅ Sin inconsistencias detectadas\n`;
+      }
+
+      partes.push(bloque);
+
+      if (discGrupo > 0) {
+        resumenAlertas += `${grupo.icon} ${grupo.nombre}: ${discGrupo} posible(s) inconsistencia(s)\n`;
+      }
+    }
+
+    if (!partes.length) {
+      return '📦 Sin datos suficientes para hacer el cruce. Intenta de nuevo.';
+    }
+
+    const mes = new Date().toLocaleString('es-CO', { month: 'long', year: 'numeric' });
+    let header = `🔍 *CRUCE FALTANTES POR CATEGORÍA*\n`;
+    header += `_${monitor.fechaInicioMes()} → ${monitor.fechaHoy()} — ${mes}_\n\n`;
+
+    if (totalDiscrepancias > 0) {
+      header += `⚠️ *SE ENCONTRARON ${totalDiscrepancias} POSIBLE(S) INCONSISTENCIA(S):*\n`;
+      header += resumenAlertas + '\n';
+      header += `_Nota: "Vendido > Stock" puede significar reposición de mercancía durante el mes o faltante real._\n\n`;
+    } else {
+      header += `✅ *Sin inconsistencias graves detectadas*\n\n`;
+    }
+
+    // Armar mensajes finales divididos en partes
+    const msgs = [];
+    let actual = header;
+    for (const bloque of partes) {
+      if ((actual + bloque).length > 3800) {
+        msgs.push(actual);
+        actual = `🔍 _(continuación)_\n\n`;
+      }
+      actual += bloque + '\n';
+    }
+    actual += `─────────────────\n🤖 _Asistente de Chu Vanegas_`;
+    msgs.push(actual);
+
+    return msgs.length === 1 ? msgs[0] : { tipo: 'mensajes', partes: msgs };
+
+  } catch(e) {
+    console.error('Error cruceFaltantesCategorias:', e.message);
+    return '❌ No pude generar el cruce. Intenta de nuevo.';
+  }
+}
+
+// ──────────────────────────────────────────────
+// BALANCE CRÍTICO — delegado a monitor-pos
+// ──────────────────────────────────────────────
+
+async function balanceCritico() {
+  try {
+    const msg = await monitor.reporteBalanceCritico({ soloSiHayCriticos: false });
+    return msg || '❌ No pude calcular el balance. Intenta de nuevo.';
+  } catch(e) {
+    console.error('Error balanceCritico:', e.message);
+    return '❌ No pude generar el balance crítico. Intenta de nuevo.';
   }
 }
 
