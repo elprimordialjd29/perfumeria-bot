@@ -531,17 +531,33 @@ async function _obtenerSaldosBrutos() {
     console.log(`📌 Click Consultar Saldos: ${clickedSaldos}`);
     await new Promise(r => setTimeout(r, 2000));
 
-    // Preparar waitForResponse ANTES de clickar Cargar
-    const saldosResponsePromise = page.waitForResponse(
-      r => r.url().includes('kardex/saldos') && r.status() === 200,
-      { timeout: 20000 }
-    ).catch(e => { console.log('⚠️ waitForResponse kardex/saldos timeout:', e.message); return null; });
+    // ── Capturar TODAS las respuestas XHR/fetch para diagnóstico y datos ──
+    let saldosData = null;
+    const xhrUrls = [];
+    page.on('response', async res => {
+      const url = res.url();
+      const ct  = res.headers()['content-type'] || '';
+      if (!ct.includes('json') && !url.includes('.json')) return;
+      xhrUrls.push(url);
+      // Capturar cualquier respuesta que parezca inventario
+      if (url.includes('kardex') || url.includes('saldo') || url.includes('inventario') ||
+          url.includes('producto') || url.includes('stock')) {
+        try {
+          const text = await res.text();
+          const d = JSON.parse(text);
+          const arr = d?.datos || d?.data || (Array.isArray(d) ? d : null);
+          if (arr?.length > 0 && arr[0]?.Nombre) {
+            console.log(`✅ Inventario capturado desde: ${url} (${arr.length} items)`);
+            saldosData = d;
+          }
+        } catch(e) {}
+      }
+    });
 
     // Click en botón Cargar
     const clickedCargar = await page.evaluate(() => {
       const btn = document.querySelector('#btnCargar');
       if (btn) { btn.dispatchEvent(new MouseEvent('click', { bubbles: true })); return true; }
-      // Fallback: buscar botón con texto "Cargar"
       const btns = [...document.querySelectorAll('button,input[type=button],[onclick]')];
       const cargar = btns.find(b => (b.innerText || b.value || '').trim().toLowerCase().includes('cargar'));
       if (cargar) { cargar.click(); return 'fallback'; }
@@ -549,32 +565,64 @@ async function _obtenerSaldosBrutos() {
     });
     console.log(`📌 Click Cargar: ${clickedCargar}`);
 
-    // Esperar la respuesta XHR
-    const saldosResponse = await saldosResponsePromise;
-    let saldos = [];
+    // Esperar respuesta hasta 12s
+    for (let i = 0; i < 12 && !saldosData; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+    }
 
-    if (saldosResponse) {
-      try {
-        const data = await saldosResponse.json();
-        saldos = data?.datos?.length ? data.datos : (Array.isArray(data) ? data : []);
-        console.log(`✅ kardex/saldos capturado: ${saldos.length} registros`);
-        if (saldos[0]) console.log('📋 Campos:', Object.keys(saldos[0]).join(', '));
-      } catch(e) {
-        console.error('❌ Error parseando kardex/saldos:', e.message);
-      }
+    console.log(`📌 URLs JSON capturadas: ${xhrUrls.slice(0,8).join(' | ') || 'ninguna'}`);
+
+    let saldos = [];
+    if (saldosData) {
+      saldos = saldosData?.datos?.length ? saldosData.datos : (Array.isArray(saldosData) ? saldosData : []);
+      console.log(`✅ Inventario: ${saldos.length} registros`);
+      if (saldos[0]) console.log('📋 Campos:', Object.keys(saldos[0]).join(', '));
     } else {
-      // Fallback: esperar 4s más y leer desde el DOM si hay tabla
-      await new Promise(r => setTimeout(r, 4000));
-      console.log('⚠️ kardex/saldos no capturado vía XHR — intentando DOM...');
+      // Fallback DOM: leer tabla si hay
+      console.log('⚠️ Sin XHR de inventario — intentando DOM...');
       saldos = await page.evaluate(() => {
         const rows = [];
         document.querySelectorAll('table tbody tr').forEach(tr => {
           const cells = [...tr.querySelectorAll('td')].map(td => td.innerText.trim());
-          if (cells.length >= 3 && cells[0]) rows.push({ Nombre: cells[0], 'Saldo Actual': cells[1] || '0', Medida: cells[2] || '' });
+          if (cells.length >= 2 && cells[0] && cells[0].length > 1)
+            rows.push({ Nombre: cells[0], 'Saldo Actual': cells[1] || '0', Medida: cells[2] || '' });
         });
         return rows;
       });
       console.log(`📋 DOM fallback: ${saldos.length} filas`);
+      // Intentar llamada directa al API con las cookies de sesión
+      if (!saldos.length) {
+        console.log('⚠️ DOM vacío — intentando fetch directo al API...');
+        const apiResult = await page.evaluate(async (base) => {
+          const urls = [
+            base + '/?r=kardex/saldos',
+            base + '/kardex/saldos',
+            base + '/?r=inventario/saldos',
+            base + '/?r=producto/saldos',
+          ];
+          for (const url of urls) {
+            try {
+              const r = await fetch(url, { credentials: 'include', headers: { 'Accept': 'application/json' } });
+              if (r.ok) {
+                const ct = r.headers.get('content-type') || '';
+                if (ct.includes('json')) {
+                  const d = await r.json();
+                  const arr = d?.datos || d?.data || (Array.isArray(d) ? d : null);
+                  if (arr?.length > 0) return { url, data: d };
+                }
+              }
+            } catch(e) {}
+          }
+          return null;
+        }, APP_BASE);
+        if (apiResult) {
+          console.log(`✅ API directo OK: ${apiResult.url}`);
+          const arr = apiResult.data?.datos || apiResult.data?.data || apiResult.data;
+          saldos = Array.isArray(arr) ? arr : [];
+        } else {
+          console.log('❌ Todos los intentos de API fallaron');
+        }
+      }
     }
 
     await browser.close();
