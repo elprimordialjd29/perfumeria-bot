@@ -202,7 +202,23 @@ Responde directamente SOLO para:
 ━━━ REDES SOCIALES ━━━
 "checklist de hoy" / "qué toca publicar hoy" → [CONTENIDO_HOY]
 "checklist de la semana" / "cómo va el contenido esta semana" → [CONTENIDO_SEMANA]
-"ya publiqué en whatsapp" / "listo instagram" / "subí tiktok" → [CONTENIDO_MARCAR:whatsapp] / [CONTENIDO_MARCAR:instagram] / [CONTENIDO_MARCAR:tiktok]`;
+"ya publiqué en whatsapp" / "listo instagram" / "subí tiktok" → [CONTENIDO_MARCAR:whatsapp] / [CONTENIDO_MARCAR:instagram] / [CONTENIDO_MARCAR:tiktok]
+
+━━━ ANÁLISIS LIBRE CON CLAUDE ━━━
+Cuando el usuario pida algo que NO encaja en ninguna etiqueta anterior (análisis comparativos, preguntas complejas, proyecciones, estrategias de negocio, combinaciones de datos, "crea un reporte de...", "analiza...", "compara...", "cuánto necesito para...", "si vendiera X qué pasaría", etc.) → usa:
+[ANALISIS:consulta completa del usuario tal como la escribió]
+
+Ejemplos de cuándo usar [ANALISIS:]:
+"¿cuánto tendría que vender cada día para llegar a la meta?" → [ANALISIS:cuánto tendría que vender cada día para llegar a la meta]
+"compara las ventas de esta semana con la semana pasada" → [ANALISIS:compara ventas semana actual vs semana pasada]
+"dame un análisis de rentabilidad del mes" → [ANALISIS:análisis de rentabilidad del mes]
+"cuántos días me dura el stock si sigo vendiendo igual" → [ANALISIS:días de stock restantes a ritmo actual]
+"qué perfumes árabes son los más rentables" → [ANALISIS:perfumes árabes más rentables]
+"crea un reporte de cajeros del mes con comparativo" → [ANALISIS:reporte cajeros mes con comparativo]
+"analiza si es bueno pedir más esencias ahora" → [ANALISIS:análisis si conviene pedir más esencias]
+"tengo $500.000 para invertir en inventario, qué compro" → [ANALISIS:inversión de $500.000 en inventario qué comprar]
+SOLO usa [ANALISIS:] cuando genuinamente no haya otra etiqueta más específica. Es el último recurso para preguntas complejas que necesitan razonamiento.`;
+
 
 // ──────────────────────────────────────────────
 // FUNCIÓN PRINCIPAL
@@ -247,6 +263,7 @@ const MENU_ACCIONES = {
   // ── ANÁLISIS / CRUCE ──
   '25': '[FALTANTES]',
   '26': '[BALANCE]',
+  '27': '[ANALISIS:análisis completo del negocio: ventas, inventario, proyecciones y recomendaciones]',
   // ── GASTOS ──
   '22': '[GASTOS]',
   // ── REDES SOCIALES ──
@@ -382,6 +399,9 @@ async function procesarMensaje(texto, esAdmin = true) {
     'redes':      '[CONTENIDO_HOY]',
     'balance':    '[BALANCE]',
     'faltantes':  '[FALTANTES]',
+    'analisis':   '[ANALISIS:análisis completo del negocio hoy]',
+    'análisis':   '[ANALISIS:análisis completo del negocio hoy]',
+    'analiza':    '[ANALISIS:análisis completo del negocio hoy]',
   };
   if (palabrasRapidas[tLow]) {
     const accion = palabrasRapidas[tLow];
@@ -755,12 +775,167 @@ async function ejecutarAccion(rawOriginal) {
       return mensajeBienvenida();
     }
 
+    // ── Análisis libre con Claude Sonnet + datos reales ──
+    if (raw.startsWith('[ANALISIS:')) {
+      const match = raw.match(/\[ANALISIS:([^\]]+)\]/);
+      const query = match ? match[1].trim() : raw.replace('[ANALISIS:', '').replace(']', '').trim();
+      return await analizarLibre(query);
+    }
+
+    // Si la respuesta parece una pregunta de negocio sin tag → analizar libre
+    const parecePreguntaNegocio = /vend|ingres|meta|profit|ganancia|rentab|promedio|tendencia|compara|proyect|cuanto.*dia|dia.*cuanto|analiz|calcul|estrat|invierto|presupuest/i.test(raw);
+    if (parecePreguntaNegocio && !raw.startsWith('[') && raw.length < 300) {
+      return await analizarLibre(raw);
+    }
+
     return raw.replace(/\[.*?\]/g, '').trim() || raw;
 }
 
 // ──────────────────────────────────────────────
 // REPORTE GENERAL (mismo del matutino, bajo demanda)
 // ──────────────────────────────────────────────
+
+// ──────────────────────────────────────────────
+// ANÁLISIS LIBRE CON CLAUDE SONNET + DATOS REALES
+// Se activa con [ANALISIS:query] cuando ninguna etiqueta cubre la pregunta
+// ──────────────────────────────────────────────
+
+async function analizarLibre(query) {
+  try {
+    console.log(`🧠 Análisis libre: "${query.substring(0, 60)}"`);
+
+    const r = fechasRelativas();
+    const meta = parseInt(process.env.META_MENSUAL) || 10000000;
+    const hoyDate = ahoraColombia();
+    const diasEnMes = new Date(hoyDate.getUTCFullYear(), hoyDate.getUTCMonth() + 1, 0).getDate();
+    const diasTranscurridos = hoyDate.getUTCDate();
+    const diasRestantes = Math.max(1, diasEnMes - diasTranscurridos);
+
+    // ── Construir contexto de datos ──
+    let ctx = `📅 Fecha: ${r.hoy} (${hoyDate.toLocaleDateString('es-CO',{weekday:'long'})})\n`;
+    ctx += `📆 Día ${diasTranscurridos}/${diasEnMes} del mes | ${diasRestantes} días restantes\n`;
+    ctx += `🎯 Meta mensual: $${meta.toLocaleString('es-CO')}\n\n`;
+
+    // Obtener datos en paralelo: POS session + mes + inventario
+    let browser = null;
+    const [resMes, resInventario] = await Promise.allSettled([
+      monitor.monitorearVentasDiarias().catch(() => null),
+      monitor.consultarAlertasInventario().catch(() => null),
+    ]);
+
+    // Sesión POS para datos de hoy + productos del mes
+    let ventasHoyTotal = 0, ventasHoyTickets = 0, cajerosHoy = [], productosTop = [];
+    try {
+      const sesion = await monitor.crearSesionPOS();
+      browser = sesion.browser;
+      const pg = sesion.page;
+      const inicioMes = monitor.fechaInicioMes();
+
+      const [ventasGen, cajerosData, prodData] = await Promise.allSettled([
+        monitor.extraerVentasGenerales(pg, r.hoy, r.hoy),
+        monitor.extraerVentasCajero(pg, r.hoy, r.hoy),
+        monitor.extraerVentasProducto(pg, inicioMes, r.hoy),
+      ]);
+
+      if (ventasGen.value) {
+        ventasHoyTotal   = ventasGen.value.total   || 0;
+        ventasHoyTickets = ventasGen.value.tickets || 0;
+      }
+      if (cajerosData.value) cajerosHoy = cajerosData.value || [];
+      if (prodData.value)    productosTop = (prodData.value || []).filter(p => {
+        const n = (p.nombre||'').trim().toLowerCase();
+        return !/^preparac|^prep\b|^recarga(\s+\d|\s*$)|^alcohol\b/i.test(n);
+      }).sort((a,b) => b.cantidad - a.cantidad).slice(0, 10);
+
+      await browser.close();
+      browser = null;
+    } catch(e) {
+      if (browser) { await browser.close().catch(()=>{}); browser = null; }
+      console.log('⚠️ Datos POS para análisis no disponibles:', e.message.substring(0,60));
+    }
+
+    const datosMes   = resMes.value;
+    const inventario = resInventario.value;
+
+    // Ventas hoy
+    if (ventasHoyTotal > 0 || cajerosHoy.length > 0) {
+      ctx += `📊 VENTAS HOY: $${ventasHoyTotal.toLocaleString('es-CO')} | ${ventasHoyTickets} tickets`;
+      if (ventasHoyTickets > 0) ctx += ` | promedio $${Math.round(ventasHoyTotal/ventasHoyTickets).toLocaleString('es-CO')}/ticket`;
+      ctx += '\n';
+      if (cajerosHoy.length) ctx += `   Cajeros hoy: ${cajerosHoy.map(c=>`${c.cajero} $${c.total?.toLocaleString('es-CO')}`).join(' | ')}\n`;
+    }
+
+    // Ventas mes
+    if (datosMes) {
+      const totalMes = datosMes.totalMes || 0;
+      const faltaMeta = Math.max(0, meta - totalMes);
+      const pct = ((totalMes / meta) * 100).toFixed(1);
+      const promDiario = diasTranscurridos > 0 ? Math.round(totalMes / diasTranscurridos) : 0;
+      const proyeccion = Math.round(promDiario * diasEnMes);
+      ctx += `\n📈 VENTAS DEL MES: $${totalMes.toLocaleString('es-CO')} (${pct}% de meta)\n`;
+      ctx += `   Promedio diario real: $${promDiario.toLocaleString('es-CO')}\n`;
+      ctx += `   Proyección fin de mes a ritmo actual: $${proyeccion.toLocaleString('es-CO')}\n`;
+      if (faltaMeta > 0) {
+        ctx += `   Falta para meta: $${faltaMeta.toLocaleString('es-CO')} (necesario $${Math.round(faltaMeta/diasRestantes).toLocaleString('es-CO')}/día)\n`;
+      } else {
+        ctx += `   ✅ META CUMPLIDA con $${(totalMes-meta).toLocaleString('es-CO')} de excedente\n`;
+      }
+      if (datosMes.cajerosMes?.length) {
+        ctx += `   Ranking cajeros mes: ${datosMes.cajerosMes.map((c,i)=>`${i+1}.${c.cajero} $${c.total?.toLocaleString('es-CO')} (${c.tickets} tkt)`).join(' | ')}\n`;
+      }
+    }
+
+    // Top productos
+    if (productosTop.length > 0) {
+      ctx += `\n🏆 TOP ${productosTop.length} PRODUCTOS (mes):\n`;
+      productosTop.forEach((p, i) => {
+        ctx += `   ${i+1}. ${p.nombre}: ${p.cantidad} uds`;
+        if (p.valor) ctx += ` ($${p.valor.toLocaleString('es-CO')})`;
+        ctx += '\n';
+      });
+    }
+
+    // Inventario
+    if (inventario) {
+      const alertasAll = [...(inventario.alertasGramos||[]), ...(inventario.alertasUnidades||[])];
+      const agotados = alertasAll.filter(p => p.saldo <= 0);
+      const criticos = alertasAll.filter(p => p.saldo > 0);
+      ctx += `\n⚠️ INVENTARIO: ${agotados.length} agotados | ${criticos.length} con stock bajo\n`;
+      if (agotados.length > 0) ctx += `   Agotados: ${agotados.slice(0,8).map(p=>p.nombre).join(', ')}\n`;
+      if (criticos.length > 0) ctx += `   Stock bajo: ${criticos.slice(0,5).map(p=>`${p.nombre}(${p.saldo}${p.medida||''})`).join(', ')}\n`;
+    }
+
+    // ── Llamar a Claude Sonnet con todos los datos ──
+    const systemAnalisis = `Eres Chu, asistente inteligente de una perfumería colombiana. El dueño te acaba de dar datos reales del negocio y te hace una pregunta o pide un análisis específico.
+
+Tu rol: Analizar los datos y crear el reporte o análisis que pide. Sé directo, usa emojis relevantes, formato Markdown para Telegram (negrita con *texto*, no con **). Responde en español colombiano informal pero profesional.
+
+Reglas:
+- USA SOLO los datos que tienes. No inventes cifras que no aparecen en el contexto.
+- Si los datos no son suficientes para responder algo, dilo claramente.
+- Cuando calcules proyecciones o estimados, muestra el razonamiento brevemente.
+- Máximo 800 palabras. Sé conciso pero completo.
+- Termina con 1 recomendación accionable si es relevante.`;
+
+    const resp = await claude.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1500,
+      system: systemAnalisis,
+      messages: [{
+        role: 'user',
+        content: `DATOS ACTUALES DEL NEGOCIO:\n${ctx}\n\nPREGUNTA / SOLICITUD: ${query}`,
+      }],
+    });
+
+    const respuesta = resp.content[0].text.trim();
+    console.log(`✅ Análisis libre completado (${respuesta.length} chars)`);
+    return respuesta;
+
+  } catch(e) {
+    console.error('❌ Error análisis libre:', e.message);
+    return `❌ No pude completar el análisis: ${e.message.substring(0,100)}. Intenta de nuevo.`;
+  }
+}
 
 async function reporteGeneral() {
   try {
@@ -2871,7 +3046,11 @@ function mensajeMenu() {
     `     ↳ Envases · Esencias · Originales · Réplicas\n` +
     `26 · Balance crítico de inventario\n` +
     `     ↳ Productos que se van a agotar pronto\n` +
-    `     ↳ Ritmo de ventas + días estimados de stock\n\n` +
+    `     ↳ Ritmo de ventas + días estimados de stock\n` +
+    `27 · 🧠 Análisis libre con Claude\n` +
+    `     ↳ Pregunta lo que quieras: proyecciones,\n` +
+    `     ↳ comparativos, estrategias, reportes nuevos\n` +
+    `     ↳ Ej: "cuánto necesito vender/día para la meta"\n\n` +
 
     `💸 *GASTOS*\n` +
     `22 · Gastos del mes\n\n` +
