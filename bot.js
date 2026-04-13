@@ -1,33 +1,33 @@
 /**
  * bot.js — Chu, asistente personal de ventas
  *
- * Interface: Telegram Bot (sin QR, sin PC, 24/7)
- * IA: Groq (Llama 3.3 70B — gratis)
- * POS: VectorPOS (Puppeteer)
- * DB: Supabase
- * Email: Gmail (nodemailer)
+ * Modo: WEBHOOK cuando RAILWAY_PUBLIC_DOMAIN está definido (Railway)
+ *       POLLING en local / desarrollo
+ *
+ * Webhook elimina el 409 Conflict porque no hay polling competitivo.
  */
 
 require('dotenv').config();
 
 const TelegramBot = require('node-telegram-bot-api');
-const agente = require('./agente');
-const reportes = require('./reportes');
-const db = require('./database');
-const fs = require('fs');
+const express     = require('express');
+const agente      = require('./agente');
+const reportes    = require('./reportes');
+const db          = require('./database');
+const fs          = require('fs');
 
 // ──────────────────────────────────────────────
 // VALIDACIONES
 // ──────────────────────────────────────────────
 
 const errores = [];
-if (!process.env.ANTHROPIC_API_KEY) errores.push('ANTHROPIC_API_KEY');
-if (!process.env.SUPABASE_URL)     errores.push('SUPABASE_URL');
-if (!process.env.SUPABASE_KEY)     errores.push('SUPABASE_KEY');
-if (!process.env.VECTORPOS_USER)   errores.push('VECTORPOS_USER');
-if (!process.env.VECTORPOS_PASS)   errores.push('VECTORPOS_PASS');
-if (!process.env.TELEGRAM_TOKEN)   errores.push('TELEGRAM_TOKEN');
-if (!process.env.TELEGRAM_ADMIN_ID) errores.push('TELEGRAM_ADMIN_ID');
+if (!process.env.ANTHROPIC_API_KEY)  errores.push('ANTHROPIC_API_KEY');
+if (!process.env.SUPABASE_URL)       errores.push('SUPABASE_URL');
+if (!process.env.SUPABASE_KEY)       errores.push('SUPABASE_KEY');
+if (!process.env.VECTORPOS_USER)     errores.push('VECTORPOS_USER');
+if (!process.env.VECTORPOS_PASS)     errores.push('VECTORPOS_PASS');
+if (!process.env.TELEGRAM_TOKEN)     errores.push('TELEGRAM_TOKEN');
+if (!process.env.TELEGRAM_ADMIN_ID)  errores.push('TELEGRAM_ADMIN_ID');
 
 if (errores.length > 0) {
   console.error('❌ Faltan variables en .env:');
@@ -35,88 +35,42 @@ if (errores.length > 0) {
   process.exit(1);
 }
 
-const ADMIN_ID = process.env.TELEGRAM_ADMIN_ID;
+const ADMIN_ID   = process.env.TELEGRAM_ADMIN_ID;
+const TOKEN      = process.env.TELEGRAM_TOKEN;
+const PORT       = parseInt(process.env.PORT) || 3000;
+
+// Railway pone el dominio público en esta variable
+const RAILWAY_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.WEBHOOK_URL || '';
+const USE_WEBHOOK    = !!RAILWAY_DOMAIN;
 
 // ──────────────────────────────────────────────
 // CLIENTE TELEGRAM
 // ──────────────────────────────────────────────
 
-const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, {
-  polling: {
-    interval: 1000,
-    autoStart: true,
-    params: { timeout: 10, allowed_updates: ['message', 'callback_query'] },
-  },
-  // Elimina updates pendientes al iniciar — evita 409 Conflict entre deploys
-  onlyFirstMatch: true,
-});
+let bot;
 
-// Al iniciar, descartar updates antiguos para evitar conflicto con instancia anterior
-bot.getUpdates({ offset: -1, timeout: 0 }).catch(() => {});
-
-// ──────────────────────────────────────────────
-// INICIO
-// ──────────────────────────────────────────────
-
-async function iniciar() {
-  console.log('\n🤖 Iniciando Chu...');
-  console.log('───────────────────────────────────');
-  console.log('📱 Interface: Telegram');
-  console.log('🧠 IA: Groq / Llama 3.3 70B');
-  console.log('🗄️  DB: Supabase');
-  console.log('💻 POS: VectorPOS');
-  console.log('📧 Email: ' + (process.env.EMAIL_USER || 'no configurado'));
-  console.log(`👤 Admin ID: ${ADMIN_ID}`);
-  console.log('───────────────────────────────────\n');
-
-  // Iniciar reportes automáticos
-  reportes.iniciar(bot);
-
-  // Registrar comandos "/" en Telegram (aparecen al escribir /)
-  try {
-    await bot.setMyCommands([
-      { command: 'menu',           description: 'Ver menú principal' },
-      { command: 'hoy',            description: 'Ventas de hoy' },
-      { command: 'mes',            description: 'Ventas de este mes' },
-      { command: 'mesanterior',    description: 'Ventas del mes pasado' },
-      { command: 'semana',         description: 'Ventas de esta semana' },
-      { command: 'general',        description: 'Reporte general completo' },
-      { command: 'cajeros',        description: 'Ranking cajeros del mes' },
-      { command: 'horapico',       description: 'Ventas por hora pico' },
-      { command: 'caja',           description: 'Movimiento de caja del mes' },
-      { command: 'productos',      description: 'Productos más vendidos del mes' },
-      { command: 'inventario',     description: 'Inventario general con alertas' },
-      { command: 'esencias',       description: 'Inventario esencias' },
-      { command: 'envases',        description: 'Inventario envases' },
-      { command: 'originales',     description: 'Inventario originales' },
-      { command: 'replicas',       description: 'Inventario réplicas 1.1' },
-      { command: 'restock',        description: 'Qué falta + costo de reposición' },
-      { command: 'faltantes',      description: 'Faltantes por categoría (cruce ventas/inv)' },
-      { command: 'balance',        description: 'Balance crítico — qué se agota pronto' },
-      { command: 'gastos',         description: 'Gastos del mes' },
-      { command: 'redes',          description: 'Checklist de redes sociales hoy' },
-    ]);
-    console.log('✅ Comandos / registrados en Telegram');
-  } catch(e) {
-    console.log('⚠️  No se pudieron registrar comandos:', e.message);
-  }
-
-  // Mensaje de bienvenida con menú directo
-  try {
-    await bot.sendMessage(ADMIN_ID, agente.mensajeBienvenida(), { parse_mode: 'Markdown' });
-  } catch(e) {
-    console.log('ℹ️  No se pudo enviar mensaje de bienvenida (normal en primer inicio)');
-  }
-
-  console.log('✅ ¡Chu ACTIVO en Telegram!');
+if (USE_WEBHOOK) {
+  // Modo webhook — Railway: sin polling, sin 409
+  bot = new TelegramBot(TOKEN, { webHook: false });
+  console.log(`🔗 Modo: WEBHOOK → https://${RAILWAY_DOMAIN}`);
+} else {
+  // Modo polling — local / desarrollo
+  bot = new TelegramBot(TOKEN, {
+    polling: {
+      interval: 300,
+      autoStart: true,
+      params: { timeout: 10, allowed_updates: ['message', 'callback_query'] },
+    },
+  });
+  console.log('🔄 Modo: POLLING (local)');
 }
 
 // ──────────────────────────────────────────────
-// MANEJO DE MENSAJES
+// MANEJO DE MENSAJES (igual en ambos modos)
 // ──────────────────────────────────────────────
 
 bot.on('message', async (msg) => {
-  const chatId = msg.chat.id.toString();
+  const chatId  = msg.chat.id.toString();
   const esAdmin = chatId === ADMIN_ID;
 
   // Verificar acceso
@@ -141,21 +95,21 @@ bot.on('message', async (msg) => {
   let texto = msg.text?.trim();
   if (!texto) return;
 
-  // Mapear comandos "/" a las palabras clave que el agente ya entiende
+  // Mapear comandos "/" → palabras clave
   const SLASH_MAP = {
-    '/menu': 'menú', '/start': 'menú',
-    '/hoy': 'hoy', '/mes': 'mes', '/mesanterior': 'mes anterior',
-    '/semana': 'semana', '/general': 'reporte general',
-    '/cajeros': 'cajeros', '/horapico': 'hora pico',
-    '/caja': 'caja', '/productos': 'productos más vendidos',
-    '/inventario': 'inventario', '/esencias': 'esencias',
-    '/envases': 'envases', '/originales': 'originales',
-    '/replicas': 'réplicas', '/restock': 'restock',
-    '/faltantes': 'faltantes', '/balance': 'balance',
-    '/gastos': 'gastos', '/redes': 'redes',
+    '/menu': 'menú',     '/start': 'menú',
+    '/hoy': 'hoy',       '/mes': 'mes',
+    '/mesanterior': 'mes anterior',  '/semana': 'semana',
+    '/general': 'reporte general',   '/cajeros': 'cajeros',
+    '/horapico': 'hora pico',        '/caja': 'caja',
+    '/productos': 'productos más vendidos',
+    '/inventario': 'inventario',     '/esencias': 'esencias',
+    '/envases': 'envases',           '/originales': 'originales',
+    '/replicas': 'réplicas',         '/restock': 'restock',
+    '/faltantes': 'faltantes',       '/balance': 'balance',
+    '/gastos': 'gastos',             '/redes': 'redes',
     '/analisis': 'analisis',
   };
-  // Extraer comando base (ignorar @BotName si viene en grupo)
   const cmdBase = texto.split('@')[0].toLowerCase();
   if (SLASH_MAP[cmdBase]) texto = SLASH_MAP[cmdBase];
 
@@ -182,14 +136,10 @@ bot.on('message', async (msg) => {
       await enviarMensaje(chatId, respuesta);
     }
   } catch (error) {
-    console.error('❌ Error:', error.message);
+    console.error('❌ Error mensaje:', error.message);
     await bot.sendMessage(chatId, '😅 Tuve un problema. Intenta de nuevo en un momento.');
   }
 });
-
-// ──────────────────────────────────────────────
-// BOTONES INLINE (checklist contenido)
-// ──────────────────────────────────────────────
 
 bot.on('callback_query', async (callbackQuery) => {
   try {
@@ -202,7 +152,9 @@ bot.on('callback_query', async (callbackQuery) => {
 });
 
 bot.on('polling_error', (err) => {
-  console.error('❌ Error Telegram polling:', err.message);
+  // Suprimir logs de 409 en modo polling local (son transitorios)
+  if (err.code === 'ETELEGRAM' && err.message.includes('409')) return;
+  console.error('❌ Polling error:', err.message);
 });
 
 // ──────────────────────────────────────────────
@@ -210,10 +162,10 @@ bot.on('polling_error', (err) => {
 // ──────────────────────────────────────────────
 
 async function enviarMensaje(chatId, texto) {
+  if (!texto) return;
   try {
     await bot.sendMessage(chatId, texto, { parse_mode: 'Markdown' });
   } catch(e) {
-    // Si falla el formato Markdown, enviar como texto plano
     try {
       await bot.sendMessage(chatId, texto);
     } catch(e2) {
@@ -222,17 +174,112 @@ async function enviarMensaje(chatId, texto) {
   }
 }
 
-// Exportar para que reportes.js pueda enviar mensajes
-module.exports = { bot, enviarMensaje, ADMIN_ID };
+// ──────────────────────────────────────────────
+// INICIO
+// ──────────────────────────────────────────────
 
-// ──────────────────────────────────────────────
-// ARRANCAR
-// ──────────────────────────────────────────────
+async function iniciar() {
+  console.log('\n🤖 Iniciando Chu...');
+  console.log('───────────────────────────────────');
+  console.log(`📱 Telegram: ${USE_WEBHOOK ? 'WEBHOOK' : 'POLLING'}`);
+  console.log('🧠 IA: Claude Haiku + Groq fallback');
+  console.log('🗄️  DB: Supabase');
+  console.log('💻 POS: VectorPOS');
+  console.log(`👤 Admin ID: ${ADMIN_ID}`);
+  console.log('───────────────────────────────────\n');
+
+  if (USE_WEBHOOK) {
+    // ── Servidor Express para recibir updates de Telegram ──
+    const app = express();
+    app.use(express.json());
+
+    const WEBHOOK_PATH = `/webhook/${TOKEN}`;
+    const WEBHOOK_URL  = `https://${RAILWAY_DOMAIN}${WEBHOOK_PATH}`;
+
+    // Endpoint que Telegram llama con cada update
+    app.post(WEBHOOK_PATH, (req, res) => {
+      bot.processUpdate(req.body);
+      res.sendStatus(200);
+    });
+
+    // Health check para Railway
+    app.get('/', (req, res) => res.json({ status: 'ok', bot: 'Chu', mode: 'webhook' }));
+
+    app.listen(PORT, async () => {
+      console.log(`🌐 Servidor webhook escuchando en puerto ${PORT}`);
+
+      // Registrar webhook en Telegram
+      try {
+        await bot.setWebHook(WEBHOOK_URL);
+        console.log(`✅ Webhook registrado: ${WEBHOOK_URL}`);
+      } catch(e) {
+        console.error('❌ Error registrando webhook:', e.message);
+      }
+
+      await postIniciar();
+    });
+  } else {
+    // Modo polling local — simplemente iniciar
+    await postIniciar();
+  }
+}
+
+async function postIniciar() {
+  // Reportes automáticos
+  reportes.iniciar(bot);
+
+  // Registrar comandos "/"
+  try {
+    await bot.setMyCommands([
+      { command: 'menu',         description: 'Ver menú principal' },
+      { command: 'hoy',          description: 'Ventas de hoy' },
+      { command: 'mes',          description: 'Ventas de este mes' },
+      { command: 'mesanterior',  description: 'Ventas del mes pasado' },
+      { command: 'semana',       description: 'Ventas de esta semana' },
+      { command: 'general',      description: 'Reporte general completo' },
+      { command: 'cajeros',      description: 'Ranking cajeros del mes' },
+      { command: 'horapico',     description: 'Ventas por hora pico' },
+      { command: 'caja',         description: 'Movimiento de caja del mes' },
+      { command: 'productos',    description: 'Productos más vendidos del mes' },
+      { command: 'inventario',   description: 'Inventario general con alertas' },
+      { command: 'esencias',     description: 'Inventario esencias' },
+      { command: 'envases',      description: 'Inventario envases' },
+      { command: 'originales',   description: 'Inventario originales' },
+      { command: 'replicas',     description: 'Inventario réplicas 1.1' },
+      { command: 'restock',      description: 'Qué falta + costo de reposición' },
+      { command: 'faltantes',    description: 'Faltantes por categoría' },
+      { command: 'balance',      description: 'Balance crítico de inventario' },
+      { command: 'gastos',       description: 'Gastos del mes' },
+      { command: 'redes',        description: 'Checklist de redes sociales hoy' },
+    ]);
+    console.log('✅ Comandos / registrados');
+  } catch(e) {
+    console.log('⚠️  Comandos no registrados:', e.message);
+  }
+
+  // Bienvenida
+  try {
+    await bot.sendMessage(ADMIN_ID, agente.mensajeBienvenida(), { parse_mode: 'Markdown' });
+  } catch(e) {
+    console.log('ℹ️  Sin mensaje de bienvenida (normal en primer inicio)');
+  }
+
+  console.log('✅ ¡Chu ACTIVO!');
+}
+
+// Exportar
+module.exports = { bot, enviarMensaje, ADMIN_ID };
 
 iniciar();
 
-process.on('SIGINT', () => {
-  console.log('\n👋 Cerrando Chu...');
-  bot.stopPolling();
+process.on('SIGTERM', async () => {
+  console.log('👋 Cerrando Chu (SIGTERM)...');
+  if (!USE_WEBHOOK) bot.stopPolling();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('👋 Cerrando Chu (SIGINT)...');
+  if (!USE_WEBHOOK) bot.stopPolling();
   process.exit(0);
 });
