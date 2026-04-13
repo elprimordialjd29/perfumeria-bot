@@ -488,6 +488,13 @@ async function procesarMensaje(texto, esAdmin = true) {
     return await ejecutarAccion('[BALANCE]');
   }
 
+  // ── Detección directa: preguntas sobre el bot mismo / capacidades ──
+  if (/qu[eé]\s+(puedes?|sab[eé]s?|hac[eé]s?)|c[oó]mo\s+(te\s+)?(uso|utilizo|configuro|coloco|pongo|funciona)|qu[eé]\s+comandos?|ayuda|help|capacidades?|qu[eé]\s+tienes?/.test(tLow)) {
+    agente.activarEsperaEleccion && agente.activarEsperaEleccion();
+    esperandoEleccion = true;
+    return mensajeBienvenida();
+  }
+
   // Fix [REPORTE_RANGO]: si el bot estaba esperando fechas, extráelas directamente
   const ultimoBot = [...historial].reverse().find(h => h.role === 'assistant');
   if (ultimoBot && (ultimoBot.content.includes('REPORTE_RANGO') || ultimoBot.content.includes('rango de fechas'))) {
@@ -503,29 +510,50 @@ async function procesarMensaje(texto, esAdmin = true) {
   historial.push({ role: 'user', content: texto });
   if (historial.length > 14) historial.shift();
 
+  const r = fechasRelativas();
+  const contextoFechas = `\n\nCONTEXTO ACTUAL: Hoy es ${r.hoy} (${new Date().toLocaleDateString('es-CO',{weekday:'long'})}). Ayer fue ${r.ayer}. Antier fue ${r.antier}. Esta semana va del lunes ${r.lunes} al ${r.hoy}.`;
+  const restriccion = esAdmin ? '' : '\n\nNOTA: Este usuario NO es el administrador. NO uses etiquetas de administración: [AGREGAR_USUARIO], [VER_USUARIOS], [QUITAR_USUARIO], [REQUERIMIENTO], [VER_REQS], [EXPORTAR_EXCEL].';
+  const systemFull = SYSTEM_PROMPT + contextoFechas + restriccion;
+
+  // ── Intentar Claude Haiku primero ──
   try {
-    const r = fechasRelativas();
-    const contextoFechas = `\n\nCONTEXTO ACTUAL: Hoy es ${r.hoy} (${new Date().toLocaleDateString('es-CO',{weekday:'long'})}). Ayer fue ${r.ayer}. Antier fue ${r.antier}. Esta semana va del lunes ${r.lunes} al ${r.hoy}.`;
-
-    const restriccion = esAdmin ? '' : '\n\nNOTA: Este usuario NO es el administrador. NO uses etiquetas de administración: [AGREGAR_USUARIO], [VER_USUARIOS], [QUITAR_USUARIO], [REQUERIMIENTO], [VER_REQS], [EXPORTAR_EXCEL].';
-
     const resp = await claude.messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 500,
-      system: SYSTEM_PROMPT + contextoFechas + restriccion,
+      system: systemFull,
       messages: historial,
     });
-
     const raw = resp.content[0].text.trim();
     historial.push({ role: 'assistant', content: raw });
-
     return await ejecutarAccion(raw);
-
   } catch (e) {
     if (e?.status === 429) return '⏳ Demasiadas consultas. Espera unos segundos.';
-    console.error('Error Claude:', e?.message);
-    return '❌ Error procesando tu mensaje. Intenta de nuevo.';
+    console.error('⚠️ Claude Haiku falló:', e?.message, '— intentando Groq...');
   }
+
+  // ── Fallback: Groq si Claude falla ──
+  if (groq) {
+    try {
+      const gr = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        max_tokens: 500,
+        messages: [
+          { role: 'system', content: systemFull },
+          ...historial,
+        ],
+      });
+      const raw = gr.choices[0]?.message?.content?.trim() || '';
+      if (raw) {
+        historial.push({ role: 'assistant', content: raw });
+        return await ejecutarAccion(raw);
+      }
+    } catch (eg) {
+      console.error('⚠️ Groq también falló:', eg?.message);
+    }
+  }
+
+  // ── Último recurso: respuesta directa sin API ──
+  return `Lo siento, no pude procesar eso ahora mismo.\n\nEscribe *menú* o / para ver qué puedo hacer por ti.`;
 }
 
 async function ejecutarAccion(rawOriginal) {
