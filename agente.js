@@ -3007,72 +3007,27 @@ function mensajeBienvenida() {
 }
 
 function mensajeMenu() {
-  return `📋 *MENÚ — SALMA PERFUM*\n\n` +
-
+  return (
+    `📋 *SALMA PERFUM*\n\n` +
     `💰 *VENTAS*\n` +
-    `1 · Ventas de hoy\n` +
-    `2 · Ventas de este mes\n` +
-    `3 · Ventas del mes pasado\n` +
-    `4 · Ventas de esta semana\n` +
-    `5 · Ventas por rango de fechas\n` +
-    `6 · Reporte general completo\n\n` +
-
+    `1·Hoy  2·Mes  3·Mes ant  4·Semana  5·Rango  6·General\n\n` +
     `👥 *CAJEROS*\n` +
-    `7 · Quién trabajó hoy\n` +
-    `8 · Ranking cajeros del mes\n` +
-    `9 · Ventas por hora (hora pico)\n` +
-    `10 · Medios de pago de hoy\n\n` +
-
-    `🏧 *MOVIMIENTO DE CAJA*\n` +
-    `11 · Caja de hoy\n` +
-    `12 · Caja de esta semana\n` +
-    `13 · Caja de este mes\n\n` +
-
+    `7·Quién trabajó  8·Ranking mes  9·Hora pico  10·Medios pago\n\n` +
+    `🏧 *CAJA*\n` +
+    `11·Hoy  12·Semana  13·Mes\n\n` +
     `📦 *PRODUCTOS*\n` +
-    `14 · Más/menos vendidos del mes\n` +
-    `15 · Ventas vs inventario completo\n\n` +
-
+    `14·Top vendidos mes  15·Ventas vs inventario\n\n` +
     `🧪 *INVENTARIO*\n` +
-    `16 · Todo el inventario\n` +
-    `17 · Inventario esencias\n` +
-    `18 · Inventario envases\n` +
-    `19 · Inventario originales\n` +
-    `20 · Inventario réplicas 1.1\n` +
-    `21 · Restock (qué falta + costo)\n\n` +
-
-    `🔍 *ANÁLISIS / FALTANTES*\n` +
-    `25 · Faltantes de mercancía por categoría\n` +
-    `     ↳ Detecta si ventas cuadran con inventario\n` +
-    `     ↳ Envases · Esencias · Originales · Réplicas\n` +
-    `26 · Balance crítico de inventario\n` +
-    `     ↳ Productos que se van a agotar pronto\n` +
-    `     ↳ Ritmo de ventas + días estimados de stock\n` +
-    `27 · 🧠 Análisis libre con Claude\n` +
-    `     ↳ Pregunta lo que quieras: proyecciones,\n` +
-    `     ↳ comparativos, estrategias, reportes nuevos\n` +
-    `     ↳ Ej: "cuánto necesito vender/día para la meta"\n\n` +
-
+    `16·Todo  17·Esencias  18·Envases  19·Originales  20·Réplicas  21·Restock\n\n` +
+    `🔍 *ANÁLISIS*\n` +
+    `25·Faltantes por categoría  26·Balance crítico  27·🧠 Análisis libre\n\n` +
     `💸 *GASTOS*\n` +
-    `22 · Gastos del mes\n\n` +
-
-    `📱 *REDES SOCIALES*\n` +
-    `23 · Contenido de hoy (checklist)\n` +
-    `24 · Plan de redes esta semana\n\n` +
-
-    `⚙️ *ADMIN*\n` +
-    `R · Crear requerimiento\n` +
-    `V · Ver requerimientos\n` +
-    `E · Exportar Excel\n\n` +
-
-    `💬 *Palabras rápidas:*\n` +
-    `_hoy · ayer · semana · mes · gastos · inventario · caja · cajeros · restock · redes · faltantes · balance_\n\n` +
-
-    `💬 *Preguntas libres:*\n` +
-    `• _"cuánto vendió Michelle esta semana"_\n` +
-    `• _"estado de singler color / tapa plana 50ml"_\n` +
-    `• _"ventas del 1 al 15 de marzo"_\n` +
-    `• _"faltante de mercancía"_ · _"las ventas cuadran"_\n` +
-    `• _"mañana"_ · _"pasado mañana"_ → contenido de redes`;
+    `22·Gastos del mes\n\n` +
+    `📱 *REDES*\n` +
+    `23·Checklist hoy  24·Plan semana\n\n` +
+    `⚙️ *ADMIN*  R·Requerimiento  V·Ver reqs  E·Excel\n\n` +
+    `_hoy · ayer · semana · mes · caja · cajeros · inventario · restock · faltantes · balance · analisis_`
+  );
 }
 
 module.exports = { procesarMensaje, activarEsperaEleccion, mensajeBienvenida, exportarExcelMes };
