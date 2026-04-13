@@ -41,7 +41,18 @@ const ADMIN_ID = process.env.TELEGRAM_ADMIN_ID;
 // CLIENTE TELEGRAM
 // ──────────────────────────────────────────────
 
-const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
+const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, {
+  polling: {
+    interval: 1000,
+    autoStart: true,
+    params: { timeout: 10, allowed_updates: ['message', 'callback_query'] },
+  },
+  // Elimina updates pendientes al iniciar — evita 409 Conflict entre deploys
+  onlyFirstMatch: true,
+});
+
+// Al iniciar, descartar updates antiguos para evitar conflicto con instancia anterior
+bot.getUpdates({ offset: -1, timeout: 0 }).catch(() => {});
 
 // ──────────────────────────────────────────────
 // INICIO

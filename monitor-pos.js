@@ -424,7 +424,10 @@ async function extraerVentasProducto(page, fechaInicial, fechaFinal) {
 // ALERTAS DE INVENTARIO
 // ──────────────────────────────────────────────
 
-const APP_BASE = 'https://app.vectorpos.com.co';
+// app.vectorpos.com.co = SPA launcher (solo links de ayuda/YouTube, sin inventario real)
+// master.vectorpos.com.co = sistema Yii2 real (mismo patrón que pos.vectorpos.com.co)
+const APP_BASE        = 'https://app.vectorpos.com.co';
+const MASTER_BASE     = 'https://master.vectorpos.com.co';
 
 // ── Umbrales de alerta por categoría ──
 // ESENCIAS (M/F/U) → óptimo >300g, crítico ≤200g
@@ -493,6 +496,23 @@ function formatPesos(val) {
  * el array crudo de productos del kardex/saldos.
  * Reutilizada por consultarAlertasInventario y consultarTodoInventario.
  */
+async function _loginYii2(page, base, user, pass) {
+  await page.goto(`${base}/?r=site/login`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.type('#txtEmail', user, { delay: 30 });
+  await page.type('#txtClave', pass, { delay: 30 });
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
+    page.click('#btnEntrar'),
+  ]);
+  if (page.url().includes('cambioSucursal')) {
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
+      page.click('a,button'),
+    ]);
+  }
+  return page.url();
+}
+
 async function _obtenerSaldosBrutos() {
   const user = process.env.VECTORPOS_USER;
   const pass = process.env.VECTORPOS_PASS;
@@ -512,7 +532,7 @@ async function _obtenerSaldosBrutos() {
       const url = res.url();
       const ct  = res.headers()['content-type'] || '';
       if (!ct.includes('json') && !url.includes('.json')) return;
-      xhrUrls.push(url.replace(APP_BASE, ''));
+      xhrUrls.push(url.replace(MASTER_BASE,'').replace(APP_BASE,''));
       if (url.includes('kardex') || url.includes('saldo') || url.includes('inventario') ||
           url.includes('producto') || url.includes('stock') || url.includes('articulo')) {
         try {
@@ -520,165 +540,139 @@ async function _obtenerSaldosBrutos() {
           const d = JSON.parse(text);
           const arr = d?.datos || d?.data || d?.rows || d?.items || (Array.isArray(d) ? d : null);
           if (arr?.length > 0 && (arr[0]?.Nombre || arr[0]?.nombre || arr[0]?.NombreProducto)) {
-            console.log(`✅ Inventario capturado desde: ${url.replace(APP_BASE,'')} (${arr.length} items)`);
+            console.log(`✅ Inventario via XHR: ${url.replace(MASTER_BASE,'').replace(APP_BASE,'')} (${arr.length} items)`);
             if (!saldosData) saldosData = arr;
           }
         } catch(e) {}
       }
     });
 
-    // ── Login ──
-    await page.goto(`${APP_BASE}/?r=site/login`, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.type('#txtEmail', user, { delay: 30 });
-    await page.type('#txtClave', pass, { delay: 30 });
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
-      page.click('#btnEntrar'),
-    ]);
+    // ── ESTRATEGIA 1: Login en master.vectorpos.com.co (Yii2 real) ──
+    console.log('📌 Intentando login en master.vectorpos.com.co...');
+    try {
+      const urlTrasLogin = await _loginYii2(page, MASTER_BASE, user, pass);
+      console.log(`📌 Master login OK — URL: ${urlTrasLogin}`);
 
-    if (page.url().includes('cambioSucursal')) {
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
-        page.click('a,button'),
-      ]);
-    }
-    console.log(`📌 Inventario login OK — URL: ${page.url()}`);
-
-    // ── Esperar a que el SPA renderice (8 segundos) ──
-    await new Promise(r => setTimeout(r, 8000));
-
-    // ── Loguear links después de que el SPA rendericé ──
-    const todosLinks = await page.evaluate(() =>
-      [...document.querySelectorAll('a[href], li[onclick], [data-url], [ng-click], [v-on\\:click], [\\@click]')]
-        .map(el => ({
-          texto: (el.innerText || el.getAttribute('data-url') || '').trim().substring(0, 40),
-          href: (el.href || el.getAttribute('onclick') || el.getAttribute('data-url') || '').toString().substring(0, 60)
-        }))
-        .filter(l => l.texto.length > 1)
-        .slice(0, 50)
-    );
-    console.log('📌 Links SPA renderizado:', JSON.stringify(todosLinks.map(l => l.texto + '→' + l.href)));
-
-    // ── Intentar click en menú Kardex/Inventario ──
-    const clickedMenu = await page.evaluate(() => {
-      const kws = ['kardex','inventario','saldo','stock'];
-      const all = [...document.querySelectorAll('a,li,span,div,button')];
-      for (const kw of kws) {
-        const el = all.find(e => e.innerText?.trim().toLowerCase() === kw ||
-                                  e.innerText?.trim().toLowerCase().startsWith(kw));
-        if (el) { el.click(); return el.innerText.trim(); }
-      }
-      return false;
-    });
-    console.log(`📌 Click menú: ${clickedMenu}`);
-    if (clickedMenu) await new Promise(r => setTimeout(r, 2000));
-
-    // ── Click en submenu "Consultar Saldos" ──
-    const clickedSaldos = await page.evaluate(() => {
-      const kws = ['consultar saldos','saldos','saldo actual','ver saldos','existencias'];
-      const all = [...document.querySelectorAll('a,li,span,div,button')];
-      for (const kw of kws) {
-        const el = all.find(e => e.innerText?.trim().toLowerCase().includes(kw));
-        if (el) { el.click(); return el.innerText.trim(); }
-      }
-      return false;
-    });
-    console.log(`📌 Click submenu: ${clickedSaldos}`);
-    if (clickedSaldos) await new Promise(r => setTimeout(r, 3000));
-
-    // ── Si no encontró nada por click, navegar directo a URLs conocidas ──
-    if (!saldosData) {
-      // Probar rutas Yii2 y hash/history SPA
-      const urlsAProbar = [
-        `${APP_BASE}/?r=kardex/index`,
-        `${APP_BASE}/?r=kardex/saldos`,
-        `${APP_BASE}/?r=inventario/index`,
-        `${APP_BASE}/?r=inventario/saldos`,
-        `${APP_BASE}/?r=producto/index`,
-        `${APP_BASE}/?r=stock/index`,
-        `${APP_BASE}/#/kardex`,
-        `${APP_BASE}/#/inventario`,
-        `${APP_BASE}/#/saldos`,
+      // Probar rutas Yii2 directas en master
+      const rutasMaster = [
+        `${MASTER_BASE}/?r=kardex/index`,
+        `${MASTER_BASE}/?r=kardex/saldos`,
+        `${MASTER_BASE}/?r=kardex/consultar-saldos`,
+        `${MASTER_BASE}/?r=inventario/index`,
+        `${MASTER_BASE}/?r=inventario/saldos`,
+        `${MASTER_BASE}/?r=producto/saldos`,
+        `${MASTER_BASE}/?r=producto/index`,
+        `${MASTER_BASE}/?r=stock/index`,
       ];
-      for (const url of urlsAProbar) {
+
+      for (const url of rutasMaster) {
         if (saldosData) break;
-        console.log(`📌 Navegando a: ${url.replace(APP_BASE,'')}`);
+        console.log(`📌 Master → ${url.replace(MASTER_BASE,'')}`);
         try {
           await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
-          await new Promise(r => setTimeout(r, 3000));
-          // Click en botón Cargar si hay
+          await new Promise(r => setTimeout(r, 2000));
+
+          // Click en Cargar si existe
           await page.evaluate(() => {
-            const btn = document.querySelector('#btnCargar,#btnBuscar,#btnConsultar') ||
-              [...document.querySelectorAll('button,input[type=button]')]
-                .find(b => /cargar|buscar|consultar|ver/i.test(b.innerText || b.value || ''));
+            const btn = document.querySelector('#btnCargar,#btnBuscar,#btnConsultar,#btnVer') ||
+              [...document.querySelectorAll('button,input[type=button],a.btn')]
+                .find(b => /cargar|buscar|consultar|ver saldo/i.test(b.innerText || b.value || ''));
             if (btn) btn.click();
           });
           await new Promise(r => setTimeout(r, 3000));
-        } catch(e) { console.log(`  ↳ Error: ${e.message.substring(0,50)}`); }
-        if (!saldosData) {
-          // Intentar leer tabla DOM en esta página
+
+          // Leer tabla DOM
           const domRows = await page.evaluate(() => {
             const rows = [];
-            document.querySelectorAll('table tbody tr, .item-row, [class*="row"]').forEach(tr => {
-              const cells = [...tr.querySelectorAll('td,[class*="col"]')].map(td => td.innerText.trim());
-              if (cells.length >= 2 && cells[0] && cells[0].length > 1 && !/^\d+$/.test(cells[0]))
+            document.querySelectorAll('table tbody tr').forEach(tr => {
+              const cells = [...tr.querySelectorAll('td')].map(td => td.innerText.trim());
+              if (cells.length >= 2 && cells[0]?.length > 1 && !/^\d+$/.test(cells[0]))
                 rows.push({ Nombre: cells[0], 'Saldo Actual': cells[1] || '0', Medida: cells[2] || '' });
             });
             return rows;
           });
           if (domRows.length > 5) {
-            console.log(`✅ DOM table en ${url.replace(APP_BASE,'')}: ${domRows.length} filas`);
+            console.log(`✅ DOM tabla en master ${url.replace(MASTER_BASE,'')}: ${domRows.length} filas`);
             saldosData = domRows;
             break;
           }
+        } catch(e) { console.log(`  ↳ ${e.message.substring(0,60)}`); }
+      }
+
+      // Fetch directo en master con sesión
+      if (!saldosData) {
+        console.log('📌 XHR capturadas en master:', xhrUrls.slice(0,8).join(' | ') || 'ninguna');
+        const apiMaster = await page.evaluate(async (base) => {
+          const urls = [
+            base + '/?r=kardex/saldos', base + '/?r=kardex/get-saldos',
+            base + '/?r=kardex/listar', base + '/?r=inventario/saldos',
+            base + '/?r=inventario/listar', base + '/?r=producto/saldos',
+            base + '/?r=producto/listar', base + '/?r=producto/get-all',
+          ];
+          const dbg = [];
+          for (const url of urls) {
+            try {
+              const r = await fetch(url, { credentials: 'include', headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+              const ct = r.headers.get('content-type') || '';
+              const txt = await r.text();
+              dbg.push(`${url.replace(base,'')}→${r.status} ${txt.substring(0,80)}`);
+              if (r.ok && ct.includes('json')) {
+                const d = JSON.parse(txt);
+                const arr = d?.datos || d?.data || d?.rows || d?.items || (Array.isArray(d) ? d : null);
+                if (arr?.length > 0) return { url, data: arr };
+              }
+            } catch(e) { dbg.push(`${url.replace(base,'')}→ERR:${e.message.substring(0,40)}`); }
+          }
+          return { debug: dbg };
+        }, MASTER_BASE);
+
+        if (apiMaster?.data) {
+          console.log(`✅ API master OK: ${apiMaster.url?.replace(MASTER_BASE,'')}`);
+          saldosData = apiMaster.data;
+        } else {
+          console.log('📋 Respuestas API master:', JSON.stringify(apiMaster?.debug?.slice(0,6)));
         }
       }
+    } catch(e) {
+      console.log(`⚠️ Master login falló: ${e.message.substring(0,80)} — intentando app.vectorpos.com.co`);
     }
 
-    // ── Fallback: fetch API directo con cookies de sesión ──
+    // ── ESTRATEGIA 2: Fallback a app.vectorpos.com.co con espera SPA extendida ──
     if (!saldosData) {
-      console.log('📌 URLs JSON capturadas hasta ahora:', xhrUrls.slice(0,10).join(' | ') || 'ninguna');
-      console.log('⚠️ Sin datos — intentando fetch API con sesión...');
-      const apiResult = await page.evaluate(async (base) => {
-        // Intentar GET primero para descubrir endpoints
-        const urls = [
-          base + '/?r=kardex/saldos-json',
-          base + '/?r=kardex/get-saldos',
-          base + '/?r=kardex/listar',
-          base + '/?r=inventario/listar',
-          base + '/?r=inventario/get',
-          base + '/?r=producto/listar',
-          base + '/?r=producto/get-all',
-          base + '/api/kardex/saldos',
-          base + '/api/inventario',
-          base + '/api/saldos',
-        ];
-        const results = [];
-        for (const url of urls) {
-          try {
-            const r = await fetch(url, { credentials: 'include', headers: { 'Accept': 'application/json, text/plain, */*', 'X-Requested-With': 'XMLHttpRequest' } });
-            const ct = r.headers.get('content-type') || '';
-            const text = await r.text();
-            results.push({ url: url.replace(base,''), status: r.status, ct: ct.substring(0,30), len: text.length, preview: text.substring(0,100) });
-            if (r.ok && ct.includes('json')) {
-              const d = JSON.parse(text);
-              const arr = d?.datos || d?.data || d?.rows || d?.items || (Array.isArray(d) ? d : null);
-              if (arr?.length > 0) return { url, data: arr };
-            }
-          } catch(e) { results.push({ url: url.replace(base,''), err: e.message }); }
-        }
-        return { debug: results };
-      }, APP_BASE);
+      console.log('📌 Fallback: login en app.vectorpos.com.co...');
+      try {
+        const urlApp = await _loginYii2(page, APP_BASE, user, pass);
+        console.log(`📌 App login OK — URL: ${urlApp}`);
+        await new Promise(r => setTimeout(r, 10000)); // esperar SPA
 
-      if (apiResult?.data) {
-        console.log(`✅ API directo OK: ${apiResult.url?.replace(APP_BASE,'')}`);
-        saldosData = apiResult.data;
-      } else if (apiResult?.debug) {
-        console.log('📋 Debug API responses:', JSON.stringify(apiResult.debug.map(r => `${r.url}→${r.status||r.err} ${r.preview||''.substring(0,50)}`)));
+        // Loguear HTML resumido para diagnóstico
+        const pageInfo = await page.evaluate(() => ({
+          title: document.title,
+          bodyText: document.body?.innerText?.substring(0, 300) || '',
+          links: [...document.querySelectorAll('a[href]')].map(a => a.href).filter(h => !h.includes('youtube') && !h.includes('tawk') && !h.includes('whatsapp')).slice(0, 20),
+        }));
+        console.log(`📌 App SPA title: ${pageInfo.title}`);
+        console.log(`📌 App SPA body: ${pageInfo.bodyText.substring(0,200)}`);
+        console.log(`📌 App links internos: ${JSON.stringify(pageInfo.links.slice(0,15))}`);
+
+        // Intentar navegar a las URLs hash que encontramos en dashboard
+        const urlsApp = [
+          `${APP_BASE}/?#/kardex`, `${APP_BASE}/?#/inventario`,
+          `${APP_BASE}/?#/saldos`, `${APP_BASE}/?#/kardex/saldos`,
+          `${APP_BASE}/?r=kardex/index`, `${APP_BASE}/?r=inventario/index`,
+        ];
+        for (const url of urlsApp) {
+          if (saldosData) break;
+          try {
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: 12000 });
+            await new Promise(r => setTimeout(r, 3000));
+          } catch(e) { /* ignorar timeout */ }
+        }
+        console.log('📌 XHR capturadas en app:', xhrUrls.slice(0,8).join(' | ') || 'ninguna');
+      } catch(e) {
+        console.log(`⚠️ App login falló: ${e.message.substring(0,80)}`);
       }
     }
-
-    console.log(`📌 XHR JSON capturadas: ${xhrUrls.slice(0,10).join(' | ') || 'ninguna'}`);
 
     let saldos = [];
     if (saldosData) {
@@ -686,7 +680,7 @@ async function _obtenerSaldosBrutos() {
       console.log(`✅ Inventario: ${saldos.length} registros`);
       if (saldos[0]) console.log('📋 Campos:', Object.keys(saldos[0]).join(', '));
     } else {
-      console.log('❌ No se pudo obtener inventario — todos los métodos fallaron');
+      console.log('❌ Inventario no disponible en master ni app');
     }
 
     await browser.close();
