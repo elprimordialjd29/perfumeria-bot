@@ -72,6 +72,35 @@ async function iniciar() {
   // Iniciar reportes automáticos
   reportes.iniciar(bot);
 
+  // Registrar comandos "/" en Telegram (aparecen al escribir /)
+  try {
+    await bot.setMyCommands([
+      { command: 'menu',           description: 'Ver menú principal' },
+      { command: 'hoy',            description: 'Ventas de hoy' },
+      { command: 'mes',            description: 'Ventas de este mes' },
+      { command: 'mesanterior',    description: 'Ventas del mes pasado' },
+      { command: 'semana',         description: 'Ventas de esta semana' },
+      { command: 'general',        description: 'Reporte general completo' },
+      { command: 'cajeros',        description: 'Ranking cajeros del mes' },
+      { command: 'horapico',       description: 'Ventas por hora pico' },
+      { command: 'caja',           description: 'Movimiento de caja del mes' },
+      { command: 'productos',      description: 'Productos más vendidos del mes' },
+      { command: 'inventario',     description: 'Inventario general con alertas' },
+      { command: 'esencias',       description: 'Inventario esencias' },
+      { command: 'envases',        description: 'Inventario envases' },
+      { command: 'originales',     description: 'Inventario originales' },
+      { command: 'replicas',       description: 'Inventario réplicas 1.1' },
+      { command: 'restock',        description: 'Qué falta + costo de reposición' },
+      { command: 'faltantes',      description: 'Faltantes por categoría (cruce ventas/inv)' },
+      { command: 'balance',        description: 'Balance crítico — qué se agota pronto' },
+      { command: 'gastos',         description: 'Gastos del mes' },
+      { command: 'redes',          description: 'Checklist de redes sociales hoy' },
+    ]);
+    console.log('✅ Comandos / registrados en Telegram');
+  } catch(e) {
+    console.log('⚠️  No se pudieron registrar comandos:', e.message);
+  }
+
   // Mensaje de bienvenida con menú directo
   try {
     await bot.sendMessage(ADMIN_ID, agente.mensajeBienvenida(), { parse_mode: 'Markdown' });
@@ -109,8 +138,26 @@ bot.on('message', async (msg) => {
     }
   }
 
-  const texto = msg.text?.trim();
+  let texto = msg.text?.trim();
   if (!texto) return;
+
+  // Mapear comandos "/" a las palabras clave que el agente ya entiende
+  const SLASH_MAP = {
+    '/menu': 'menú', '/start': 'menú',
+    '/hoy': 'hoy', '/mes': 'mes', '/mesanterior': 'mes anterior',
+    '/semana': 'semana', '/general': 'reporte general',
+    '/cajeros': 'cajeros', '/horapico': 'hora pico',
+    '/caja': 'caja', '/productos': 'productos más vendidos',
+    '/inventario': 'inventario', '/esencias': 'esencias',
+    '/envases': 'envases', '/originales': 'originales',
+    '/replicas': 'réplicas', '/restock': 'restock',
+    '/faltantes': 'faltantes', '/balance': 'balance',
+    '/gastos': 'gastos', '/redes': 'redes',
+    '/analisis': 'analisis',
+  };
+  // Extraer comando base (ignorar @BotName si viene en grupo)
+  const cmdBase = texto.split('@')[0].toLowerCase();
+  if (SLASH_MAP[cmdBase]) texto = SLASH_MAP[cmdBase];
 
   const nombre = msg.from?.first_name || chatId;
   console.log(`📩 [${new Date().toLocaleTimeString('es-CO')}] ${nombre}: ${texto.substring(0, 80)}`);
