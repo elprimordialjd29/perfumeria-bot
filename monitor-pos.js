@@ -10,6 +10,56 @@ const puppeteer = require('puppeteer');
 const db = require('./database');
 
 const BASE = 'https://pos.vectorpos.com.co';
+
+// ──────────────────────────────────────────────
+// SEMÁFORO — máximo 1 Chromium a la vez en Railway
+// Evita "Cannot fork" / "Resource temporarily unavailable"
+// ──────────────────────────────────────────────
+let _browserSlots = 0;
+const _MAX_BROWSERS = 1;
+const _browserQueue = [];
+
+function _acquireBrowser() {
+  return new Promise(resolve => {
+    const tryAcquire = () => {
+      if (_browserSlots < _MAX_BROWSERS) {
+        _browserSlots++;
+        resolve();
+      } else {
+        _browserQueue.push(tryAcquire);
+      }
+    };
+    tryAcquire();
+  });
+}
+
+function _releaseBrowser() {
+  _browserSlots--;
+  if (_browserQueue.length > 0) {
+    const next = _browserQueue.shift();
+    next();
+  }
+}
+
+const PUPPETEER_ARGS = [
+  '--no-sandbox', '--disable-setuid-sandbox',
+  '--disable-gpu', '--disable-dev-shm-usage',
+  '--disable-software-rasterizer', '--no-zygote',
+  '--single-process',
+];
+
+async function lanzarBrowser() {
+  await _acquireBrowser();
+  try {
+    const browser = await puppeteer.launch({ headless: true, args: PUPPETEER_ARGS });
+    const _close = browser.close.bind(browser);
+    browser.close = async () => { await _close(); _releaseBrowser(); };
+    return browser;
+  } catch(e) {
+    _releaseBrowser();
+    throw e;
+  }
+}
 const ID_SYA = process.env.VECTORPOS_ID || 'A21431100100001';
 const META_MENSUAL = parseInt(process.env.META_MENSUAL) || 10000000;
 
@@ -74,23 +124,7 @@ async function crearBrowserLogueado() {
     throw new Error('Faltan VECTORPOS_USER y VECTORPOS_PASS en el .env');
   }
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-gpu',
-      '--disable-dev-shm-usage',
-      '--disable-extensions',
-      '--disable-background-networking',
-      '--disable-sync',
-      '--disable-translate',
-      '--metrics-recording-only',
-      '--mute-audio',
-      '--no-first-run',
-      '--safebrowsing-disable-auto-update',
-    ],
-  });
+  const browser = await lanzarBrowser();
 
   try {
     const page = await browser.newPage();
@@ -518,10 +552,7 @@ async function _obtenerSaldosBrutos() {
   const pass = process.env.VECTORPOS_PASS;
   let browser = null;
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
-    });
+    browser = await lanzarBrowser();
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
 
@@ -702,10 +733,7 @@ async function _obtenerCatalogoProductos() {
   const pass = process.env.VECTORPOS_PASS;
   let browser = null;
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
-    });
+    browser = await lanzarBrowser();
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
 
@@ -1392,10 +1420,7 @@ async function extraerHistoricoFacturas(fechaInicial, fechaFinal, incluirDetalle
   const parseNum = (s) => parseInt(String(s || '0').replace(/\./g, '').replace(/[^0-9]/g, '')) || 0;
 
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
-    });
+    browser = await lanzarBrowser();
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
     await _loginApp(page, user, pass);
