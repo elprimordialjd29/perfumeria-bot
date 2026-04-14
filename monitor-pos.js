@@ -525,15 +525,21 @@ function formatPesos(val) {
 }
 
 
+// Último diagnóstico de inventario — se llena cuando retorna 0 productos
+let _ultimoDiagInventario = null;
+
+/** Retorna el último diagnóstico de inventario (para enviarlo al admin por Telegram) */
+function obtenerDiagInventario() { return _ultimoDiagInventario; }
+
 async function _obtenerSaldosBrutos() {
+  const diag = [];
   let browser = null;
   try {
-    // Reutilizar el login probado de pos.vectorpos.com.co (mismos campos que ventas)
     const sesion = await crearBrowserLogueado();
     browser = sesion.browser;
     const page  = sesion.page;
 
-    // ── Interceptor de XHR — captura JSON de inventario en cualquier ruta ──
+    // ── Interceptor XHR ──
     let saldosData = null;
     page.on('response', async res => {
       if (saldosData) return;
@@ -554,42 +560,35 @@ async function _obtenerSaldosBrutos() {
       }
     });
 
-    // ── Capturar menú de navegación para diagnóstico ──
+    // ── Capturar menú de navegación ──
     const menuLinks = await page.evaluate(() =>
       [...document.querySelectorAll('a[href]')]
-        .map(a => ({ texto: a.innerText.trim().substring(0, 40), href: a.getAttribute('href') }))
-        .filter(l => l.href && !l.href.startsWith('http') && l.href !== '#' && l.href.includes('r='))
-        .slice(0, 30)
+        .map(a => ({ t: a.innerText.trim().substring(0, 30), h: a.getAttribute('href') }))
+        .filter(l => l.h && !l.h.startsWith('http') && l.h !== '#' && l.h.includes('r='))
+        .slice(0, 25)
     );
-    if (menuLinks.length > 0) {
-      console.log('📋 Módulos disponibles en menú:', menuLinks.map(l => `${l.texto}→${l.href}`).join(' | '));
-    } else {
-      console.log('⚠️ No se encontraron links de módulo en el menú');
-    }
+    const menuStr = menuLinks.length
+      ? menuLinks.map(l => `${l.t}→${l.h}`).join('\n')
+      : '(sin links r= en menú)';
+    diag.push(`*Menú POS (${menuLinks.length} módulos):*\n\`${menuStr.substring(0,600)}\``);
 
-    // ── Rutas a probar en pos.vectorpos.com.co (mismo dominio del login probado) ──
+    // ── Rutas a probar ──
     const rutasPos = [
       `${BASE}/index.php?r=kardex/index`,
       `${BASE}/index.php?r=kardex/saldos`,
-      `${BASE}/index.php?r=kardex/consultar-saldos`,
       `${BASE}/index.php?r=inventario/index`,
       `${BASE}/index.php?r=inventario/saldos`,
-      `${BASE}/index.php?r=producto/saldos`,
       `${BASE}/index.php?r=producto/index`,
-      `${BASE}/index.php?r=stock/saldos`,
+      `${BASE}/index.php?r=producto/saldos`,
       `${BASE}/index.php?r=stock/index`,
     ];
 
-    console.log('📌 Probando rutas inventario en pos.vectorpos.com.co...');
     for (const url of rutasPos) {
       if (saldosData) break;
       const ruta = url.replace(BASE, '');
-      console.log(`📌 POS → ${ruta}`);
       try {
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
         await new Promise(r => setTimeout(r, 2000));
-
-        // Intentar click en botón "Cargar" / "Buscar" si existe
         await page.evaluate(() => {
           const btn = document.querySelector('#btnCargar,#btnBuscar,#btnConsultar,#btnVer') ||
             [...document.querySelectorAll('button,input[type=button],a.btn')]
@@ -598,26 +597,21 @@ async function _obtenerSaldosBrutos() {
         });
         await new Promise(r => setTimeout(r, 3000));
 
-        // Leer tabla DOM — capturar todos los campos disponibles
         const domRows = await page.evaluate(() => {
           const rows = [];
-          // Leer cabeceras para mapear columnas
-          const headers = [...(document.querySelectorAll('table thead tr th, table tr th') || [])]
+          const headers = [...document.querySelectorAll('table thead tr th, table tr th')]
             .map(th => th.innerText.trim());
           document.querySelectorAll('table tbody tr').forEach(tr => {
             const cells = [...tr.querySelectorAll('td')].map(td => td.innerText.trim());
             if (cells.length < 2 || !cells[0] || /^\d+$/.test(cells[0]) || cells[0].length < 2) return;
             const row = { Nombre: cells[0], 'Saldo Actual': cells[1] || '0', Medida: cells[2] || '' };
-            // Intentar mapear columnas extra si hay cabeceras
             if (headers.length >= cells.length) {
               cells.forEach((v, i) => {
                 const h = headers[i] || '';
                 if (/costo|precio|valor|cost|price/i.test(h)) row['Costo Unidad'] = v;
                 if (/categ|tipo|class/i.test(h)) row['Categoria'] = v;
               });
-            } else if (cells[3]) {
-              row['Costo Unidad'] = cells[3]; // columna 4 suele ser costo
-            }
+            } else if (cells[3]) { row['Costo Unidad'] = cells[3]; }
             rows.push(row);
           });
           return rows;
@@ -629,58 +623,55 @@ async function _obtenerSaldosBrutos() {
           break;
         }
 
-        // Loguear diagnóstico si no hay tabla
         const info = await page.evaluate(() => ({
           title: document.title,
-          url: location.href,
+          finalUrl: location.href,
           tableRows: document.querySelectorAll('table tr').length,
-          bodySnippet: document.body?.innerText?.substring(0, 150) || '',
+          body: document.body?.innerText?.substring(0, 120) || '',
         }));
-        console.log(`  ↳ title="${info.title}" rows=${info.tableRows} body="${info.bodySnippet.replace(/\n/g,' ').substring(0,80)}"`);
+        const linea = `${ruta} → title="${info.title}" url="${info.finalUrl.replace(BASE,'')}" rows=${info.tableRows} body="${info.body.replace(/\n/g,' ').substring(0,60)}"`;
+        diag.push(linea);
+        console.log('📌', linea);
 
-      } catch(e) { console.log(`  ↳ error: ${e.message.substring(0,60)}`); }
+      } catch(e) {
+        const linea = `${ruta} → ERROR: ${e.message.substring(0,60)}`;
+        diag.push(linea);
+        console.log('📌', linea);
+      }
     }
 
-    // Si las páginas no devolvieron tabla DOM, intentar fetch JSON con la sesión activa
+    // ── Fetch JSON con sesión ──
     if (!saldosData) {
-      console.log('📌 Intentando fetch JSON con sesión activa...');
       const apiResult = await page.evaluate(async (base) => {
         const urls = [
-          base + '/index.php?r=kardex/saldos',
-          base + '/index.php?r=kardex/get-saldos',
-          base + '/index.php?r=kardex/listar',
-          base + '/index.php?r=inventario/saldos',
-          base + '/index.php?r=inventario/listar',
-          base + '/index.php?r=producto/saldos',
-          base + '/index.php?r=producto/listar',
-          base + '/index.php?r=producto/get-all',
-          base + '/index.php?r=stock/get-saldos',
+          base + '/index.php?r=kardex/saldos', base + '/index.php?r=kardex/get-saldos',
+          base + '/index.php?r=inventario/saldos', base + '/index.php?r=producto/saldos',
+          base + '/index.php?r=producto/listar', base + '/index.php?r=producto/get-all',
         ];
         const dbg = [];
         for (const url of urls) {
           try {
-            const r = await fetch(url, {
-              credentials: 'include',
-              headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-            });
-            const ct  = r.headers.get('content-type') || '';
+            const r = await fetch(url, { credentials: 'include', headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+            const ct = r.headers.get('content-type') || '';
             const txt = await r.text();
-            dbg.push(`${url.replace(base,'')}→${r.status} ${txt.substring(0,80)}`);
+            dbg.push(`${url.replace(base,'')}→${r.status} ${txt.substring(0,60)}`);
             if (r.ok && ct.includes('json')) {
               const d = JSON.parse(txt);
               const arr = d?.datos || d?.data || d?.rows || d?.items || (Array.isArray(d) ? d : null);
               if (arr?.length > 0) return { url, data: arr };
             }
-          } catch(e) { dbg.push(`${url.replace(base,'')}→ERR:${e.message.substring(0,40)}`); }
+          } catch(e) { dbg.push(`${url.replace(base,'')}→ERR:${e.message.substring(0,30)}`); }
         }
         return { debug: dbg };
       }, BASE);
 
       if (apiResult?.data) {
-        console.log(`✅ Fetch JSON OK: ${apiResult.url?.replace(BASE,'')}`);
         saldosData = apiResult.data;
+        console.log(`✅ Fetch JSON OK: ${apiResult.url?.replace(BASE,'')}`);
       } else {
-        console.log('📋 Fetch JSON (debug):', JSON.stringify(apiResult?.debug?.slice(0, 6)));
+        const fetchDiag = (apiResult?.debug || []).join('\n');
+        diag.push(`*Fetch JSON:*\n\`${fetchDiag.substring(0,500)}\``);
+        console.log('📋 Fetch JSON (debug):', fetchDiag.substring(0,200));
       }
     }
 
@@ -688,9 +679,10 @@ async function _obtenerSaldosBrutos() {
     if (saldosData) {
       saldos = Array.isArray(saldosData) ? saldosData : (saldosData?.datos || saldosData?.data || []);
       console.log(`✅ Inventario: ${saldos.length} registros`);
-      if (saldos[0]) console.log('📋 Campos:', Object.keys(saldos[0]).join(', '));
+      _ultimoDiagInventario = null;
     } else {
-      console.log('❌ Inventario no disponible — verifica rutas en pos.vectorpos.com.co');
+      console.log('❌ Inventario: 0 registros');
+      _ultimoDiagInventario = `🔍 *DIAGNÓSTICO INVENTARIO*\n\n${diag.join('\n\n')}`;
     }
 
     await browser.close();
@@ -698,6 +690,7 @@ async function _obtenerSaldosBrutos() {
     return saldos.length ? saldos : [];
   } catch (e) {
     console.error('❌ Error obteniendo saldos inventario:', e.message);
+    _ultimoDiagInventario = `🔍 *DIAGNÓSTICO INVENTARIO*\n\nError crítico: \`${e.message}\``;
     if (browser) await browser.close().catch(() => {});
     return null;
   }
@@ -1754,4 +1747,5 @@ module.exports = {
   extraerFacturasConSesion,
   calcularVelocidadInventario,
   reporteBalanceCritico,
+  obtenerDiagInventario,
 };

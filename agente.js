@@ -622,7 +622,13 @@ async function ejecutarAccion(rawOriginal) {
 
     if (raw.startsWith('[INVENTARIO]')) {
       const resultado = await monitor.consultarAlertasInventario();
-      return monitor.generarMensajeAlertas(resultado);
+      const msg = monitor.generarMensajeAlertas(resultado);
+      // Si retornó 0 productos, adjuntar diagnóstico para el admin
+      if (resultado?.total === 0) {
+        const diag = monitor.obtenerDiagInventario();
+        if (diag) return msg + '\n\n' + diag;
+      }
+      return msg;
     }
 
     if (raw.startsWith('[RANKING_HOY]')) {
