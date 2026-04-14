@@ -554,6 +554,19 @@ async function _obtenerSaldosBrutos() {
       }
     });
 
+    // ── Capturar menú de navegación para diagnóstico ──
+    const menuLinks = await page.evaluate(() =>
+      [...document.querySelectorAll('a[href]')]
+        .map(a => ({ texto: a.innerText.trim().substring(0, 40), href: a.getAttribute('href') }))
+        .filter(l => l.href && !l.href.startsWith('http') && l.href !== '#' && l.href.includes('r='))
+        .slice(0, 30)
+    );
+    if (menuLinks.length > 0) {
+      console.log('📋 Módulos disponibles en menú:', menuLinks.map(l => `${l.texto}→${l.href}`).join(' | '));
+    } else {
+      console.log('⚠️ No se encontraron links de módulo en el menú');
+    }
+
     // ── Rutas a probar en pos.vectorpos.com.co (mismo dominio del login probado) ──
     const rutasPos = [
       `${BASE}/index.php?r=kardex/index`,
