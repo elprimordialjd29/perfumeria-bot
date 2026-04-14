@@ -541,12 +541,13 @@ async function _obtenerSaldosBrutos() {
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
     await page.setViewport({ width: 1280, height: 800 });
 
-    // ── Interceptor XHR — solo activo después de click en "Cargar Lista" ──
+    // ── Interceptor XHR — activo solo después de click en "Cargar Lista" ──
     let saldosData = null;
-    let _capturarXHR = false; // se activa solo tras click en Cargar Lista
+    let _capturarXHR = false;
+    let _mejorXHR = null; // guarda el array más grande visto
     const xhrCapturadas = [];
     page.on('response', async res => {
-      if (saldosData || !_capturarXHR) return;
+      if (!_capturarXHR) return;
       const url = res.url();
       const ct  = res.headers()['content-type'] || '';
       if (!ct.includes('json')) return;
@@ -556,14 +557,19 @@ async function _obtenerSaldosBrutos() {
         const d = JSON.parse(text);
         const arr = d?.datos || d?.data || d?.rows || d?.items ||
                     d?.productos || d?.saldos || (Array.isArray(d) ? d : null);
-        // Requerir al menos 30 items para evitar listas pequeñas de servicios
-        if (arr?.length >= 30) {
-          const first = arr[0];
-          const hasNombre = first?.Nombre || first?.nombre || first?.NombreProducto || first?.name;
-          const hasSaldo  = first?.['Saldo Actual'] !== undefined || first?.saldo !== undefined ||
-                            first?.SaldoActual !== undefined || first?.stock !== undefined;
-          if (hasNombre && hasSaldo) {
-            console.log(`✅ Inventario XHR: ${url.replace(APP_BASE,'')} (${arr.length} items)`);
+        if (!arr?.length) return;
+        const first = arr[0];
+        const hasNombre = !!(first?.Nombre || first?.nombre || first?.NombreProducto || first?.name);
+        const hasSaldo  = first?.['Saldo Actual'] !== undefined || first?.saldo !== undefined ||
+                          first?.SaldoActual !== undefined || first?.stock !== undefined;
+        if (hasNombre) {
+          console.log(`📡 XHR candidato: ${url.replace(APP_BASE,'')} (${arr.length} items, saldo=${hasSaldo})`);
+          // Guardar el más grande o el primero con saldo real
+          if (!_mejorXHR || (hasSaldo && arr.length > (_mejorXHR?.length || 0))) {
+            _mejorXHR = arr;
+          }
+          if (hasSaldo && !saldosData) {
+            console.log(`✅ Inventario XHR OK: ${url.replace(APP_BASE,'')} (${arr.length} items)`);
             saldosData = arr;
           }
         }
@@ -595,7 +601,19 @@ async function _obtenerSaldosBrutos() {
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 12000 });
         await new Promise(r => setTimeout(r, 3000));
 
-        // Buscar y hacer click en "Cargar Lista" — activar captura XHR ANTES del click
+        // Seleccionar "Todos" en el dropdown de lista de inventario
+        await page.evaluate(() => {
+          const selects = document.querySelectorAll('select');
+          selects.forEach(sel => {
+            const opts = [...sel.options];
+            const todos = opts.find(o => /todos|all|consolidado/i.test(o.text));
+            if (todos) { sel.value = todos.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+          });
+        });
+        await new Promise(r => setTimeout(r, 800));
+
+        // Activar XHR y hacer click en "Cargar Lista"
+        _capturarXHR = true;
         const clickedCargar = await page.evaluate((findClick) => {
           return eval(findClick)([
             'Cargar Lista', 'Cargar lista', 'cargar lista',
@@ -604,16 +622,24 @@ async function _obtenerSaldosBrutos() {
         }, _JS_FIND_AND_CLICK);
 
         if (clickedCargar) {
-          _capturarXHR = true; // activar captura solo ahora
           console.log(`  ↳ Click en "${clickedCargar}", esperando datos...`);
-          await new Promise(r => setTimeout(r, 8000)); // esperar más para datos grandes
+          await new Promise(r => setTimeout(r, 10000));
+        } else {
+          await new Promise(r => setTimeout(r, 3000));
         }
 
         if (saldosData) break;
 
-        // Leer tabla DOM si no hubo XHR
+        // Usar el mejor XHR capturado si hay
+        if (_mejorXHR?.length > 2) {
+          console.log(`  ↳ Usando mejor XHR: ${_mejorXHR.length} items`);
+          saldosData = _mejorXHR;
+          break;
+        }
+
+        // Fallback: leer tabla DOM con scroll
         const rows = await _leerTablaInventario(page);
-        if (rows.length > 5) {
+        if (rows.length > 2) {
           console.log(`✅ Tabla DOM en ${hash}: ${rows.length} filas`);
           saldosData = rows;
           break;
@@ -665,15 +691,26 @@ async function _obtenerSaldosBrutos() {
           eval(findClick)(['Cargar Lista', 'Cargar lista', 'Cargar', 'cargar', 'Ver Saldos']),
           _JS_FIND_AND_CLICK
         );
+        // Seleccionar "Todos" en dropdown
+        await page.evaluate(() => {
+          document.querySelectorAll('select').forEach(sel => {
+            const todos = [...sel.options].find(o => /todos|all|consolidado/i.test(o.text));
+            if (todos) { sel.value = todos.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+          });
+        });
+        await new Promise(r => setTimeout(r, 500));
+
+        _capturarXHR = true;
         if (clickedCargar) {
-          _capturarXHR = true;
           console.log(`  ↳ Click "Cargar Lista", esperando...`);
-          await new Promise(r => setTimeout(r, 6000));
+          await new Promise(r => setTimeout(r, 10000));
         }
+
+        if (!saldosData && _mejorXHR?.length > 2) { saldosData = _mejorXHR; break; }
 
         if (!saldosData) {
           const rows = await _leerTablaInventario(page);
-          if (rows.length > 5) { saldosData = rows; break; }
+          if (rows.length > 2) { saldosData = rows; break; }
         }
       }
 
@@ -694,7 +731,13 @@ async function _obtenerSaldosBrutos() {
       saldos = Array.isArray(saldosData) ? saldosData : [];
       console.log(`✅ Inventario: ${saldos.length} registros`);
       if (saldos[0]) console.log('📋 Campos:', Object.keys(saldos[0]).join(', '));
-      _ultimoDiagInventario = null;
+      // Mostrar diagnóstico también cuando hay muy pocos productos (< 10)
+      if (saldos.length < 10) {
+        diag.push(`*XHR capturadas (${xhrCapturadas.length}):*\n\`${xhrCapturadas.slice(0,10).join('\n').substring(0,300) || '(ninguna)'}\``);
+        _ultimoDiagInventario = `⚠️ Solo ${saldos.length} productos cargados\n\n${diag.join('\n\n')}`;
+      } else {
+        _ultimoDiagInventario = null;
+      }
     } else {
       console.log('❌ Inventario: 0 registros tras todos los intentos');
       _ultimoDiagInventario = `🔍 *DIAGNÓSTICO INVENTARIO (SPA)*\n\n${diag.join('\n\n')}`;
