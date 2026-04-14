@@ -532,169 +532,210 @@ let _ultimoDiagInventario = null;
 function obtenerDiagInventario() { return _ultimoDiagInventario; }
 
 async function _obtenerSaldosBrutos() {
+  _ultimoDiagInventario = null;
   const diag = [];
-  _ultimoDiagInventario = null; // resetear diagnóstico anterior
   let browser = null;
   try {
-    const sesion = await crearBrowserLogueado();
-    browser = sesion.browser;
-    const page  = sesion.page;
+    browser = await lanzarBrowser();
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    await page.setViewport({ width: 1280, height: 800 });
 
-    // ── Interceptor XHR ──
+    // ── Interceptor XHR — captura cualquier JSON que parezca inventario ──
     let saldosData = null;
+    const xhrCapturadas = [];
     page.on('response', async res => {
       if (saldosData) return;
       const url = res.url();
       const ct  = res.headers()['content-type'] || '';
-      if (!ct.includes('json') && !url.includes('.json')) return;
-      if (url.includes('kardex') || url.includes('saldo') || url.includes('inventario') ||
-          url.includes('producto') || url.includes('stock') || url.includes('articulo')) {
-        try {
-          const text = await res.text();
-          const d = JSON.parse(text);
-          const arr = d?.datos || d?.data || d?.rows || d?.items || (Array.isArray(d) ? d : null);
-          if (arr?.length > 0 && (arr[0]?.Nombre || arr[0]?.nombre || arr[0]?.NombreProducto)) {
-            console.log(`✅ Inventario XHR: ${url.replace(BASE,'')} (${arr.length} items)`);
+      if (!ct.includes('json')) return;
+      xhrCapturadas.push(url.replace(APP_BASE, ''));
+      try {
+        const text = await res.text();
+        const d = JSON.parse(text);
+        // Buscar array de productos con Nombre + Saldo
+        const arr = d?.datos || d?.data || d?.rows || d?.items ||
+                    d?.productos || d?.saldos || (Array.isArray(d) ? d : null);
+        if (arr?.length > 5) {
+          const first = arr[0];
+          const hasNombre = first?.Nombre || first?.nombre || first?.NombreProducto || first?.name;
+          const hasSaldo  = first?.['Saldo Actual'] || first?.saldo || first?.SaldoActual ||
+                            first?.stock || first?.cantidad;
+          if (hasNombre && hasSaldo !== undefined) {
+            console.log(`✅ Inventario XHR: ${url.replace(APP_BASE,'')} (${arr.length} items)`);
             saldosData = arr;
           }
-        } catch(e) {}
-      }
+        }
+      } catch(e) {}
     });
 
-    // ── Capturar menú de navegación ──
-    const menuLinks = await page.evaluate(() =>
-      [...document.querySelectorAll('a[href]')]
-        .map(a => ({ t: a.innerText.trim().substring(0, 30), h: a.getAttribute('href') }))
-        .filter(l => l.h && !l.h.startsWith('http') && l.h !== '#' && l.h.includes('r='))
-        .slice(0, 25)
-    );
-    const menuStr = menuLinks.length
-      ? menuLinks.map(l => `${l.t}→${l.h}`).join('\n')
-      : '(sin links r= en menú)';
-    diag.push(`*Menú POS (${menuLinks.length} módulos):*\n\`${menuStr.substring(0,600)}\``);
+    // ── Login en app.vectorpos.com.co ──
+    console.log('📌 Login en app.vectorpos.com.co...');
+    await _loginApp(page, process.env.VECTORPOS_USER, process.env.VECTORPOS_PASS);
+    console.log(`📌 URL post-login: ${page.url()}`);
+    await new Promise(r => setTimeout(r, 3000));
 
-    // ── Rutas a probar ──
-    const rutasPos = [
-      `${BASE}/index.php?r=kardex/index`,
-      `${BASE}/index.php?r=kardex/saldos`,
-      `${BASE}/index.php?r=inventario/index`,
-      `${BASE}/index.php?r=inventario/saldos`,
-      `${BASE}/index.php?r=producto/index`,
-      `${BASE}/index.php?r=producto/saldos`,
-      `${BASE}/index.php?r=stock/index`,
+    // ── Intentar rutas hash directas de la SPA ──
+    const hashRutas = [
+      `${APP_BASE}/#/kardex/saldos`,
+      `${APP_BASE}/#/kardex`,
+      `${APP_BASE}/#/consultar-saldos`,
+      `${APP_BASE}/#/inventario/saldos`,
+      `${APP_BASE}/#/inventario`,
+      `${APP_BASE}/#/saldos`,
+      `${APP_BASE}/#/stock`,
     ];
 
-    for (const url of rutasPos) {
+    for (const url of hashRutas) {
       if (saldosData) break;
-      const ruta = url.replace(BASE, '');
+      const hash = url.replace(APP_BASE, '');
+      console.log(`📌 SPA hash → ${hash}`);
       try {
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
-        await new Promise(r => setTimeout(r, 2000));
-        await page.evaluate(() => {
-          const btn = document.querySelector('#btnCargar,#btnBuscar,#btnConsultar,#btnVer') ||
-            [...document.querySelectorAll('button,input[type=button],a.btn')]
-              .find(b => /cargar|buscar|consultar|ver saldo/i.test(b.innerText || b.value || ''));
-          if (btn) btn.click();
-        });
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 12000 });
         await new Promise(r => setTimeout(r, 3000));
 
-        const domRows = await page.evaluate(() => {
-          const rows = [];
-          const headers = [...document.querySelectorAll('table thead tr th, table tr th')]
-            .map(th => th.innerText.trim());
-          document.querySelectorAll('table tbody tr').forEach(tr => {
-            const cells = [...tr.querySelectorAll('td')].map(td => td.innerText.trim());
-            if (cells.length < 2 || !cells[0] || /^\d+$/.test(cells[0]) || cells[0].length < 2) return;
-            const row = { Nombre: cells[0], 'Saldo Actual': cells[1] || '0', Medida: cells[2] || '' };
-            if (headers.length >= cells.length) {
-              cells.forEach((v, i) => {
-                const h = headers[i] || '';
-                if (/costo|precio|valor|cost|price/i.test(h)) row['Costo Unidad'] = v;
-                if (/categ|tipo|class/i.test(h)) row['Categoria'] = v;
-              });
-            } else if (cells[3]) { row['Costo Unidad'] = cells[3]; }
-            rows.push(row);
-          });
-          return rows;
-        });
+        // Buscar y hacer click en "Cargar Lista" / "Cargar" / "Buscar"
+        const clickedCargar = await page.evaluate((findClick) => {
+          return eval(findClick)([
+            'Cargar Lista', 'Cargar lista', 'cargar lista',
+            'Cargar', 'cargar', 'Buscar', 'Ver Saldos', 'Consultar',
+          ]);
+        }, _JS_FIND_AND_CLICK);
 
-        if (domRows.length > 5) {
-          console.log(`✅ Tabla DOM en ${ruta}: ${domRows.length} filas`);
-          saldosData = domRows;
+        if (clickedCargar) {
+          console.log(`  ↳ Click en "${clickedCargar}", esperando tabla...`);
+          await new Promise(r => setTimeout(r, 5000));
+        }
+
+        if (saldosData) break;
+
+        // Leer tabla DOM si no hubo XHR
+        const rows = await _leerTablaInventario(page);
+        if (rows.length > 5) {
+          console.log(`✅ Tabla DOM en ${hash}: ${rows.length} filas`);
+          saldosData = rows;
           break;
         }
 
         const info = await page.evaluate(() => ({
+          url: location.href.replace(location.origin, ''),
           title: document.title,
-          finalUrl: location.href,
-          tableRows: document.querySelectorAll('table tr').length,
-          body: document.body?.innerText?.substring(0, 120) || '',
+          h1: document.querySelector('h1,h2,.page-title,.titulo')?.innerText?.substring(0,50) || '',
+          rows: document.querySelectorAll('table tr').length,
         }));
-        const linea = `${ruta} → title="${info.title}" url="${info.finalUrl.replace(BASE,'')}" rows=${info.tableRows} body="${info.body.replace(/\n/g,' ').substring(0,60)}"`;
+        const linea = `${hash} → title="${info.title}" h1="${info.h1}" rows=${info.rows}`;
         diag.push(linea);
-        console.log('📌', linea);
+        console.log('  ↳', linea);
 
       } catch(e) {
-        const linea = `${ruta} → ERROR: ${e.message.substring(0,60)}`;
+        const linea = `${hash} → ERROR: ${e.message.substring(0,60)}`;
         diag.push(linea);
-        console.log('📌', linea);
+        console.log('  ↳', linea);
       }
     }
 
-    // ── Fetch JSON con sesión ──
+    // ── Navegar por el menú de la SPA si las rutas hash no funcionaron ──
     if (!saldosData) {
-      const apiResult = await page.evaluate(async (base) => {
-        const urls = [
-          base + '/index.php?r=kardex/saldos', base + '/index.php?r=kardex/get-saldos',
-          base + '/index.php?r=inventario/saldos', base + '/index.php?r=producto/saldos',
-          base + '/index.php?r=producto/listar', base + '/index.php?r=producto/get-all',
-        ];
-        const dbg = [];
-        for (const url of urls) {
-          try {
-            const r = await fetch(url, { credentials: 'include', headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
-            const ct = r.headers.get('content-type') || '';
-            const txt = await r.text();
-            dbg.push(`${url.replace(base,'')}→${r.status} ${txt.substring(0,60)}`);
-            if (r.ok && ct.includes('json')) {
-              const d = JSON.parse(txt);
-              const arr = d?.datos || d?.data || d?.rows || d?.items || (Array.isArray(d) ? d : null);
-              if (arr?.length > 0) return { url, data: arr };
-            }
-          } catch(e) { dbg.push(`${url.replace(base,'')}→ERR:${e.message.substring(0,30)}`); }
-        }
-        return { debug: dbg };
-      }, BASE);
+      console.log('📌 Navegando menú SPA...');
+      await page.goto(APP_BASE, { waitUntil: 'networkidle2', timeout: 12000 });
+      await new Promise(r => setTimeout(r, 3000));
 
-      if (apiResult?.data) {
-        saldosData = apiResult.data;
-        console.log(`✅ Fetch JSON OK: ${apiResult.url?.replace(BASE,'')}`);
-      } else {
-        const fetchDiag = (apiResult?.debug || []).join('\n');
-        diag.push(`*Fetch JSON:*\n\`${fetchDiag.substring(0,500)}\``);
-        console.log('📋 Fetch JSON (debug):', fetchDiag.substring(0,200));
+      // Intentar secuencias de navegación comunes
+      const secuencias = [
+        ['Kardex', 'Consultar saldos'],
+        ['Inventario', 'Consultar saldos'],
+        ['Kardex', 'Saldos'],
+        ['Inventario', 'Saldos'],
+        ['Consultar saldos'],
+        ['Saldos'],
+        ['Kardex'],
+      ];
+
+      for (const pasos of secuencias) {
+        if (saldosData) break;
+        for (const paso of pasos) {
+          const clicked = await page.evaluate((findClick, texto) => eval(findClick)([texto]), _JS_FIND_AND_CLICK, paso);
+          console.log(`  ↳ Click "${paso}": ${clicked ? 'OK' : 'no encontrado'}`);
+          if (clicked) await new Promise(r => setTimeout(r, 2500));
+        }
+
+        const clickedCargar = await page.evaluate((findClick) =>
+          eval(findClick)(['Cargar Lista', 'Cargar lista', 'Cargar', 'cargar', 'Ver Saldos']),
+          _JS_FIND_AND_CLICK
+        );
+        if (clickedCargar) {
+          console.log(`  ↳ Click "Cargar Lista", esperando...`);
+          await new Promise(r => setTimeout(r, 6000));
+        }
+
+        if (!saldosData) {
+          const rows = await _leerTablaInventario(page);
+          if (rows.length > 5) { saldosData = rows; break; }
+        }
       }
+
+      // Último intento: capturar texto visible del menú para diagnóstico
+      const menuTexto = await page.evaluate(() =>
+        [...document.querySelectorAll('nav a, .sidebar a, .menu a, [class*="menu"] a, [class*="nav"] a, [class*="sidebar"] a')]
+          .map(a => a.innerText.trim()).filter(t => t.length > 1 && t.length < 40).slice(0, 30)
+      );
+      if (menuTexto.length) {
+        diag.push(`*Menú SPA detectado:*\n\`${menuTexto.join(' | ').substring(0, 400)}\``);
+        console.log('📋 Menú SPA:', menuTexto.slice(0,15).join(' | '));
+      }
+      diag.push(`*XHR capturadas:*\n\`${xhrCapturadas.slice(0,15).join('\n').substring(0,400) || '(ninguna)'}\``);
     }
 
     let saldos = [];
     if (saldosData) {
-      saldos = Array.isArray(saldosData) ? saldosData : (saldosData?.datos || saldosData?.data || []);
+      saldos = Array.isArray(saldosData) ? saldosData : [];
       console.log(`✅ Inventario: ${saldos.length} registros`);
+      if (saldos[0]) console.log('📋 Campos:', Object.keys(saldos[0]).join(', '));
       _ultimoDiagInventario = null;
     } else {
-      console.log('❌ Inventario: 0 registros');
-      _ultimoDiagInventario = `🔍 *DIAGNÓSTICO INVENTARIO*\n\n${diag.join('\n\n')}`;
+      console.log('❌ Inventario: 0 registros tras todos los intentos');
+      _ultimoDiagInventario = `🔍 *DIAGNÓSTICO INVENTARIO (SPA)*\n\n${diag.join('\n\n')}`;
     }
 
     await browser.close();
     browser = null;
     return saldos.length ? saldos : [];
+
   } catch (e) {
-    console.error('❌ Error obteniendo saldos inventario:', e.message);
-    _ultimoDiagInventario = `🔍 *DIAGNÓSTICO INVENTARIO*\n\nError crítico: \`${e.message}\``;
+    console.error('❌ Error _obtenerSaldosBrutos:', e.message);
+    _ultimoDiagInventario = `🔍 *DIAGNÓSTICO INVENTARIO*\n\nError: \`${e.message}\``;
     if (browser) await browser.close().catch(() => {});
     return null;
   }
+}
+
+/** Lee la tabla de inventario de la página actual (columnas dinámicas por cabecera) */
+async function _leerTablaInventario(page) {
+  return await page.evaluate(() => {
+    const rows = [];
+    // Buscar cabeceras para mapear columnas
+    const thEls = document.querySelectorAll('table thead th, table tr th');
+    const headers = [...thEls].map(th => th.innerText.trim().toLowerCase());
+
+    const iNombre = headers.findIndex(h => /nombre|producto|articulo/i.test(h));
+    const iSaldo  = headers.findIndex(h => /saldo.actual|saldo$/i.test(h));
+    const iMedida = headers.findIndex(h => /medida|unidad/i.test(h));
+    const iCosto  = headers.findIndex(h => /costo.unidad|costo$/i.test(h));
+
+    document.querySelectorAll('table tbody tr').forEach(tr => {
+      const cells = [...tr.querySelectorAll('td')].map(td => td.innerText.trim());
+      if (cells.length < 2) return;
+      const nombre = cells[iNombre >= 0 ? iNombre : 0] || '';
+      if (!nombre || /^\d+$/.test(nombre) || nombre.length < 2) return;
+      rows.push({
+        Nombre:        nombre,
+        'Saldo Actual': cells[iSaldo  >= 0 ? iSaldo  : 1] || '0',
+        Medida:        cells[iMedida >= 0 ? iMedida : 2] || '',
+        'Costo Unidad': cells[iCosto  >= 0 ? iCosto  : 3] || '',
+      });
+    });
+    return rows;
+  });
 }
 
 /**
