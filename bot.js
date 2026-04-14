@@ -9,15 +9,6 @@
 
 require('dotenv').config();
 
-// ── Health check HTTP — arranca PRIMERO antes de todo ──────────────────────
-// Railway necesita un puerto HTTP activo o marca 502
-const http = require('http');
-const PORT = parseInt(process.env.PORT) || 3000;
-http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ status: 'ok', bot: 'Chu Perfumeria', uptime: process.uptime() }));
-}).listen(PORT, () => console.log(`Health check activo en puerto ${PORT}`));
-
 const TelegramBot = require('node-telegram-bot-api');
 const express     = require('express');
 const agente      = require('./agente');
