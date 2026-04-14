@@ -219,7 +219,10 @@ async function iniciar() {
       await postIniciar();
     });
   } else {
-    // Modo polling local — simplemente iniciar
+    // Modo polling — arrancar igual un HTTP server para Railway health check
+    const app = require('express')();
+    app.get('/', (req, res) => res.json({ status: 'ok', bot: 'Chu', mode: 'polling' }));
+    app.listen(PORT, () => console.log(`Health check activo en puerto ${PORT} (modo polling)`));
     await postIniciar();
   }
 }
