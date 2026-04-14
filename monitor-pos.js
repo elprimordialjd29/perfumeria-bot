@@ -533,6 +533,7 @@ function obtenerDiagInventario() { return _ultimoDiagInventario; }
 
 async function _obtenerSaldosBrutos() {
   const diag = [];
+  _ultimoDiagInventario = null; // resetear diagnóstico anterior
   let browser = null;
   try {
     const sesion = await crearBrowserLogueado();

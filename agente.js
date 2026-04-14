@@ -18,6 +18,20 @@ const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_
 
 const historial = [];
 
+/**
+ * Ejecuta una función de inventario y, si retorna 0 productos,
+ * adjunta el diagnóstico de scraping directamente en el mensaje.
+ */
+async function withInvDiag(fn) {
+  const resultado = await fn();
+  const diag = monitor.obtenerDiagInventario();
+  if (diag) {
+    const txt = typeof resultado === 'string' ? resultado : (resultado || '');
+    return txt + '\n\n' + diag;
+  }
+  return resultado;
+}
+
 function formatFechaHora(fechaStr) {
   if (!fechaStr) return '';
   const match = fechaStr.match(/(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})/);
@@ -617,18 +631,14 @@ async function ejecutarAccion(rawOriginal) {
     }
 
     if (raw.startsWith('[INVENTARIO_TODO]')) {
-      return await reporteInventarioTodo();
+      return await withInvDiag(() => reporteInventarioTodo());
     }
 
     if (raw.startsWith('[INVENTARIO]')) {
-      const resultado = await monitor.consultarAlertasInventario();
-      const msg = monitor.generarMensajeAlertas(resultado);
-      // Si retornó 0 productos, adjuntar diagnóstico para el admin
-      if (resultado?.total === 0) {
-        const diag = monitor.obtenerDiagInventario();
-        if (diag) return msg + '\n\n' + diag;
-      }
-      return msg;
+      return await withInvDiag(async () => {
+        const resultado = await monitor.consultarAlertasInventario();
+        return monitor.generarMensajeAlertas(resultado);
+      });
     }
 
     if (raw.startsWith('[RANKING_HOY]')) {
@@ -739,27 +749,27 @@ async function ejecutarAccion(rawOriginal) {
     if (raw.startsWith('[INVENTARIO_CAT:')) {
       const match = raw.match(/\[INVENTARIO_CAT:([^\]]+)\]/);
       const cat = match ? match[1].trim() : '';
-      return await reporteInventarioCategoria(cat);
+      return await withInvDiag(() => reporteInventarioCategoria(cat));
     }
 
     if (raw.startsWith('[VENTAS_INVENTARIO]')) {
-      return await reporteVentasVsInventario();
+      return await withInvDiag(() => reporteVentasVsInventario());
     }
 
     if (raw.startsWith('[FALTANTES]')) {
-      return await cruceFaltantesCategorias();
+      return await withInvDiag(() => cruceFaltantesCategorias());
     }
 
     if (raw.startsWith('[BALANCE]')) {
-      return await balanceCritico();
+      return await withInvDiag(() => balanceCritico());
     }
 
     if (raw.startsWith('[RESTOCK_TODO]')) {
-      return await reporteRestock(false); // todos los bajos
+      return await withInvDiag(() => reporteRestock(false));
     }
 
     if (raw.startsWith('[RESTOCK]')) {
-      return await reporteRestock(true); // solo agotados
+      return await withInvDiag(() => reporteRestock(true));
     }
 
     if (raw.startsWith('[CRUCE_PRODUCTO_RANGO:')) {
