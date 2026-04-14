@@ -214,6 +214,39 @@ async function iniciar() {
     // Health check para Railway
     app.get('/', (req, res) => res.json({ status: 'ok', bot: 'Chu', mode: 'webhook' }));
 
+    // API de estado para VANEGAS — datos reales del bot
+    app.get('/api/status', async (req, res) => {
+      try {
+        const hoy = new Date().toISOString().slice(0, 10);
+        const [ventasHoy, datosPOS] = await Promise.allSettled([
+          db.obtenerVentas({ desde: hoy }),
+          db.obtenerDatosPOS({ desde: hoy, hasta: hoy }),
+        ]);
+
+        const ventas = ventasHoy.status === 'fulfilled' ? ventasHoy.value : [];
+        const pos    = datosPOS.status === 'fulfilled' ? datosPOS.value : [];
+
+        const totalHoy   = ventas.reduce((s, v) => s + (v.total || 0), 0);
+        const ticketsHoy = ventas.length;
+        const posHoy     = pos[0] || null;
+
+        res.json({
+          status: 'ok',
+          bot: 'Chu (Perfumeria)',
+          uptime: Math.floor(process.uptime()),
+          fecha: hoy,
+          ventas_bot: { total: totalHoy, tickets: ticketsHoy },
+          pos: posHoy ? {
+            total_dia: posHoy.total_dia,
+            transacciones: posHoy.num_transacciones,
+          } : null,
+          meta_mensual: process.env.META_MENSUAL || null,
+        });
+      } catch (e) {
+        res.json({ status: 'ok', bot: 'Chu (Perfumeria)', uptime: Math.floor(process.uptime()), error: e.message });
+      }
+    });
+
     app.listen(PORT, async () => {
       console.log(`🌐 Servidor webhook escuchando en puerto ${PORT}`);
 
@@ -228,10 +261,32 @@ async function iniciar() {
       await postIniciar();
     });
   } else {
-    // Modo polling — arrancar igual un HTTP server para Railway health check
+    // Modo polling — HTTP server para Railway health check + API status
     const app = require('express')();
+    app.use(require('express').json());
     app.get('/', (req, res) => res.json({ status: 'ok', bot: 'Chu', mode: 'polling' }));
-    app.listen(PORT, () => console.log(`Health check activo en puerto ${PORT} (modo polling)`));
+    app.get('/api/status', async (req, res) => {
+      try {
+        const hoy = new Date().toISOString().slice(0, 10);
+        const [ventasHoy, datosPOS] = await Promise.allSettled([
+          db.obtenerVentas({ desde: hoy }),
+          db.obtenerDatosPOS({ desde: hoy, hasta: hoy }),
+        ]);
+        const ventas = ventasHoy.status === 'fulfilled' ? ventasHoy.value : [];
+        const pos    = datosPOS.status === 'fulfilled' ? datosPOS.value : [];
+        const posHoy = pos[0] || null;
+        res.json({
+          status: 'ok', bot: 'Chu (Perfumeria)',
+          uptime: Math.floor(process.uptime()), fecha: hoy,
+          ventas_bot: { total: ventas.reduce((s, v) => s + (v.total || 0), 0), tickets: ventas.length },
+          pos: posHoy ? { total_dia: posHoy.total_dia, transacciones: posHoy.num_transacciones } : null,
+          meta_mensual: process.env.META_MENSUAL || null,
+        });
+      } catch (e) {
+        res.json({ status: 'ok', bot: 'Chu (Perfumeria)', uptime: Math.floor(process.uptime()), error: e.message });
+      }
+    });
+    app.listen(PORT, () => console.log(`HTTP activo en puerto ${PORT} (modo polling)`));
     await postIniciar();
   }
 }
