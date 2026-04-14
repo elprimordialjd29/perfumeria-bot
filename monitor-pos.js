@@ -541,11 +541,12 @@ async function _obtenerSaldosBrutos() {
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
     await page.setViewport({ width: 1280, height: 800 });
 
-    // ── Interceptor XHR — captura cualquier JSON que parezca inventario ──
+    // ── Interceptor XHR — solo activo después de click en "Cargar Lista" ──
     let saldosData = null;
+    let _capturarXHR = false; // se activa solo tras click en Cargar Lista
     const xhrCapturadas = [];
     page.on('response', async res => {
-      if (saldosData) return;
+      if (saldosData || !_capturarXHR) return;
       const url = res.url();
       const ct  = res.headers()['content-type'] || '';
       if (!ct.includes('json')) return;
@@ -553,15 +554,15 @@ async function _obtenerSaldosBrutos() {
       try {
         const text = await res.text();
         const d = JSON.parse(text);
-        // Buscar array de productos con Nombre + Saldo
         const arr = d?.datos || d?.data || d?.rows || d?.items ||
                     d?.productos || d?.saldos || (Array.isArray(d) ? d : null);
-        if (arr?.length > 5) {
+        // Requerir al menos 30 items para evitar listas pequeñas de servicios
+        if (arr?.length >= 30) {
           const first = arr[0];
           const hasNombre = first?.Nombre || first?.nombre || first?.NombreProducto || first?.name;
-          const hasSaldo  = first?.['Saldo Actual'] || first?.saldo || first?.SaldoActual ||
-                            first?.stock || first?.cantidad;
-          if (hasNombre && hasSaldo !== undefined) {
+          const hasSaldo  = first?.['Saldo Actual'] !== undefined || first?.saldo !== undefined ||
+                            first?.SaldoActual !== undefined || first?.stock !== undefined;
+          if (hasNombre && hasSaldo) {
             console.log(`✅ Inventario XHR: ${url.replace(APP_BASE,'')} (${arr.length} items)`);
             saldosData = arr;
           }
@@ -594,7 +595,7 @@ async function _obtenerSaldosBrutos() {
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 12000 });
         await new Promise(r => setTimeout(r, 3000));
 
-        // Buscar y hacer click en "Cargar Lista" / "Cargar" / "Buscar"
+        // Buscar y hacer click en "Cargar Lista" — activar captura XHR ANTES del click
         const clickedCargar = await page.evaluate((findClick) => {
           return eval(findClick)([
             'Cargar Lista', 'Cargar lista', 'cargar lista',
@@ -603,8 +604,9 @@ async function _obtenerSaldosBrutos() {
         }, _JS_FIND_AND_CLICK);
 
         if (clickedCargar) {
-          console.log(`  ↳ Click en "${clickedCargar}", esperando tabla...`);
-          await new Promise(r => setTimeout(r, 5000));
+          _capturarXHR = true; // activar captura solo ahora
+          console.log(`  ↳ Click en "${clickedCargar}", esperando datos...`);
+          await new Promise(r => setTimeout(r, 8000)); // esperar más para datos grandes
         }
 
         if (saldosData) break;
@@ -664,6 +666,7 @@ async function _obtenerSaldosBrutos() {
           _JS_FIND_AND_CLICK
         );
         if (clickedCargar) {
+          _capturarXHR = true;
           console.log(`  ↳ Click "Cargar Lista", esperando...`);
           await new Promise(r => setTimeout(r, 6000));
         }
@@ -869,7 +872,16 @@ async function consultarTodoInventario() {
   ]);
 
   if (!saldos) return null;
-  console.log(`✅ ${saldos.length} saldos | catálogo: ${catalogo?.length || 0} productos`);
+
+  // Filtrar productos de servicio (no son inventario físico)
+  const esServicio = n => {
+    const nl = (n || '').toLowerCase();
+    return /adicional\s*gramo|adicional\s+\$|^recarga\s|^preparac|^prep\s|^servicio\s|aerosol perfume/i.test(nl) ||
+           (nl.includes('adicional') && nl.includes('gramo')) ||
+           /\$[\d.,]+/.test(n); // nombre contiene precio como "$1.000"
+  };
+  const saldosFiltrados = saldos.filter(p => !esServicio(p.Nombre || p.nombre || ''));
+  console.log(`✅ ${saldosFiltrados.length} saldos (de ${saldos.length}, filtrados ${saldos.length - saldosFiltrados.length} servicios) | catálogo: ${catalogo?.length || 0} productos`);
 
   // Construir mapa de catálogo por nombre normalizado
   const mapacat = {};
@@ -886,8 +898,8 @@ async function consultarTodoInventario() {
     });
   }
 
-  return saldos.map(p => {
-    const nombre = (p.Nombre || '').trim();
+  return saldosFiltrados.map(p => {
+    const nombre = (p.Nombre || p.nombre || '').trim();
     const key    = nombre.toLowerCase();
     const cat    = mapacat[key] || {};
 
