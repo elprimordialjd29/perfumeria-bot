@@ -11,10 +11,39 @@ require('dotenv').config();
 
 const TelegramBot = require('node-telegram-bot-api');
 const express     = require('express');
+const crypto      = require('crypto');
 const agente      = require('./agente');
 const reportes    = require('./reportes');
 const db          = require('./database');
 const fs          = require('fs');
+
+// ──────────────────────────────────────────────
+// RATE LIMITING (en memoria, por chatId)
+// ──────────────────────────────────────────────
+
+const _rateLimitMap = new Map(); // chatId → { count, resetAt }
+const RATE_LIMIT_MAX = 8;        // máx mensajes por ventana
+const RATE_LIMIT_WINDOW = 30000; // ventana de 30 segundos
+
+function _checkRateLimit(chatId) {
+  const now = Date.now();
+  const entry = _rateLimitMap.get(chatId);
+  if (!entry || now > entry.resetAt) {
+    _rateLimitMap.set(chatId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+    return true; // permitido
+  }
+  entry.count += 1;
+  if (entry.count > RATE_LIMIT_MAX) return false; // bloqueado
+  return true;
+}
+
+// Limpiar entradas viejas cada 5 minutos para evitar memory leak
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, entry] of _rateLimitMap.entries()) {
+    if (now > entry.resetAt) _rateLimitMap.delete(id);
+  }
+}, 300000);
 
 // ──────────────────────────────────────────────
 // VALIDACIONES
@@ -43,6 +72,14 @@ const PORT       = parseInt(process.env.PORT) || 3000;
 const RAILWAY_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.WEBHOOK_URL || '';
 const USE_WEBHOOK    = !!RAILWAY_DOMAIN;
 
+// Secret token para verificar que los updates vienen de Telegram
+// Usar variable de entorno o generar uno fijo a partir del token (determinístico)
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET ||
+  crypto.createHmac('sha256', 'chu-webhook-salt').update(TOKEN).digest('hex').slice(0, 32);
+
+// Token sanitizado para logs (nunca mostrar el token real)
+const TOKEN_SAFE = TOKEN ? TOKEN.slice(0, 6) + '***' + TOKEN.slice(-4) : '???';
+
 // ──────────────────────────────────────────────
 // CLIENTE TELEGRAM
 // ──────────────────────────────────────────────
@@ -52,7 +89,7 @@ let bot;
 if (USE_WEBHOOK) {
   // Modo webhook — Railway: sin polling, sin 409
   bot = new TelegramBot(TOKEN, { webHook: false });
-  console.log(`🔗 Modo: WEBHOOK → https://${RAILWAY_DOMAIN}`);
+  console.log(`🔗 Modo: WEBHOOK → https://${RAILWAY_DOMAIN} (token: ${TOKEN_SAFE})`);
 } else {
   // Modo polling — local / desarrollo
   bot = new TelegramBot(TOKEN, {
@@ -73,6 +110,16 @@ bot.on('message', async (msg) => {
   const chatId  = msg.chat.id.toString();
   const esAdmin = chatId === ADMIN_ID;
 
+  // ── Rate limiting (antes de cualquier otra validación) ──
+  if (!_checkRateLimit(chatId)) {
+    // Silencioso para no revelar info al atacante
+    return;
+  }
+
+  // ── Validar longitud del mensaje ──
+  const textoRaw = msg.text?.trim() || '';
+  if (textoRaw.length > 4000) return; // ignorar mensajes excesivamente largos
+
   // Verificar acceso
   if (!esAdmin) {
     const autorizado = await db.esUsuarioAutorizado(chatId);
@@ -92,7 +139,7 @@ bot.on('message', async (msg) => {
     }
   }
 
-  let texto = msg.text?.trim();
+  let texto = textoRaw;
   if (!texto) return;
 
   // Mapear comandos "/" → palabras clave
@@ -198,6 +245,12 @@ async function iniciar() {
 
     // Endpoint que Telegram llama con cada update
     app.post(WEBHOOK_PATH, (req, res) => {
+      // Verificar secret_token enviado por Telegram en el header
+      const incomingSecret = req.headers['x-telegram-bot-api-secret-token'];
+      if (incomingSecret !== WEBHOOK_SECRET) {
+        console.warn(`⚠️  Webhook: secret inválido desde ${req.ip}`);
+        return res.sendStatus(401);
+      }
       bot.processUpdate(req.body);
       res.sendStatus(200);
     });
@@ -234,17 +287,19 @@ async function iniciar() {
           meta_mensual: process.env.META_MENSUAL || null,
         });
       } catch (e) {
-        res.json({ status: 'ok', bot: 'Chu (Perfumeria)', uptime: Math.floor(process.uptime()), error: e.message });
+        console.error('❌ /api/status error:', e.message);
+        res.json({ status: 'ok', bot: 'Chu (Perfumeria)', uptime: Math.floor(process.uptime()) });
       }
     });
 
     app.listen(PORT, async () => {
       console.log(`🌐 Servidor webhook escuchando en puerto ${PORT}`);
 
-      // Registrar webhook en Telegram
+      // Registrar webhook en Telegram (con secret_token para seguridad)
       try {
-        await bot.setWebHook(WEBHOOK_URL);
-        console.log(`✅ Webhook registrado: ${WEBHOOK_URL}`);
+        await bot.setWebHook(WEBHOOK_URL, { secret_token: WEBHOOK_SECRET });
+        // No loguear la URL completa (contiene el token)
+        console.log(`✅ Webhook registrado (token: ${TOKEN_SAFE})`);
       } catch(e) {
         console.error('❌ Error registrando webhook:', e.message);
       }
@@ -274,7 +329,8 @@ async function iniciar() {
           meta_mensual: process.env.META_MENSUAL || null,
         });
       } catch (e) {
-        res.json({ status: 'ok', bot: 'Chu (Perfumeria)', uptime: Math.floor(process.uptime()), error: e.message });
+        console.error('❌ /api/status error:', e.message);
+        res.json({ status: 'ok', bot: 'Chu (Perfumeria)', uptime: Math.floor(process.uptime()) });
       }
     });
     app.listen(PORT, () => console.log(`HTTP activo en puerto ${PORT} (modo polling)`));
