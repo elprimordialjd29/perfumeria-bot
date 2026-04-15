@@ -19,10 +19,18 @@ let _browserSlots = 0;
 const _MAX_BROWSERS = 1;
 const _browserQueue = [];
 
-function _acquireBrowser() {
-  return new Promise(resolve => {
+function _acquireBrowser(timeoutMs = 90000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      // Quitar de la cola si sigue esperando
+      const idx = _browserQueue.indexOf(tryAcquire);
+      if (idx >= 0) _browserQueue.splice(idx, 1);
+      reject(new Error('Timeout esperando browser disponible (90s)'));
+    }, timeoutMs);
+
     const tryAcquire = () => {
       if (_browserSlots < _MAX_BROWSERS) {
+        clearTimeout(timer);
         _browserSlots++;
         resolve();
       } else {
@@ -532,6 +540,14 @@ let _ultimoDiagInventario = null;
 function obtenerDiagInventario() { return _ultimoDiagInventario; }
 
 async function _obtenerSaldosBrutos() {
+  // Timeout global: liberar semáforo en máximo 75 segundos
+  const _timeout = new Promise((_, rej) =>
+    setTimeout(() => rej(new Error('Timeout inventario (75s)')), 75000)
+  );
+  return Promise.race([_obtenerSaldosBrutosImpl(), _timeout]);
+}
+
+async function _obtenerSaldosBrutosImpl() {
   _ultimoDiagInventario = null;
   const diag = [];
   let browser = null;
@@ -623,7 +639,7 @@ async function _obtenerSaldosBrutos() {
 
         if (clickedCargar) {
           console.log(`  ↳ Click en "${clickedCargar}", esperando datos...`);
-          await new Promise(r => setTimeout(r, 10000));
+          await new Promise(r => setTimeout(r, 6000));
         } else {
           await new Promise(r => setTimeout(r, 3000));
         }
@@ -703,7 +719,7 @@ async function _obtenerSaldosBrutos() {
         _capturarXHR = true;
         if (clickedCargar) {
           console.log(`  ↳ Click "Cargar Lista", esperando...`);
-          await new Promise(r => setTimeout(r, 10000));
+          await new Promise(r => setTimeout(r, 6000));
         }
 
         if (!saldosData && _mejorXHR?.length > 2) { saldosData = _mejorXHR; break; }
