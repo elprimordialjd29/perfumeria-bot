@@ -379,6 +379,21 @@ async function postIniciar() {
   }
 
   console.log('✅ ¡Chu ACTIVO!');
+
+  // ── Warm-up de VectorPOS en background ──
+  // Hace el primer login ahora para que Chromium quede "caliente"
+  // y el primer comando del usuario no sufra el cold-start de Railway.
+  const monitor = require('./monitor-pos');
+  setTimeout(async () => {
+    try {
+      console.log('🔥 Warm-up VectorPOS...');
+      const datos = await monitor.monitorearVentasDiarias();
+      if (datos) console.log(`✅ Warm-up OK — hoy: $${datos.hoy.total.toLocaleString('es-CO')}`);
+      else console.log('⚠️  Warm-up VectorPOS sin datos (primer inicio OK)');
+    } catch(e) {
+      console.log('⚠️  Warm-up VectorPOS error (no crítico):', e.message);
+    }
+  }, 5000); // 5s después de que todo esté listo
 }
 
 // Exportar

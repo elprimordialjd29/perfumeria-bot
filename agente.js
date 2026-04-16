@@ -607,8 +607,14 @@ async function ejecutarAccion(rawOriginal) {
     }
 
     if (raw.startsWith('[REPORTE_MES]')) {
-      const datos = await monitor.monitorearVentasDiarias();
-      if (!datos) return '❌ No pude conectar a VectorPOS.';
+      let datos = await monitor.monitorearVentasDiarias();
+      if (!datos) {
+        // Segundo intento tras 6s (cold-start de Railway)
+        console.log('🔄 [REPORTE_MES] Segundo intento VectorPOS...');
+        await new Promise(r => setTimeout(r, 6000));
+        datos = await monitor.monitorearVentasDiarias();
+      }
+      if (!datos) return '❌ No pude conectar a VectorPOS. Intenta en unos segundos.';
       return monitor.generarMensajeMeta(datos);
     }
 
@@ -1342,6 +1348,11 @@ async function reporteRango(desde, hasta, titulo) {
     return msg;
   } catch (e) {
     console.error('Error reporte rango:', e.message);
+    // Si es un error de conexión/browser (cold start), indicar que reintente
+    const esConexion = /timeout|navigation|net::|ECONNREFUSED|browser|Protocol/i.test(e.message);
+    if (esConexion) {
+      return '⏳ VectorPOS tardó en responder. Intenta de nuevo en unos segundos.';
+    }
     return '❌ No pude generar el reporte. Verifica la conexión a VectorPOS.';
   }
 }

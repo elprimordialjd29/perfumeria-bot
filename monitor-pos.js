@@ -124,7 +124,7 @@ async function crearSesionPOS() {
   return await crearBrowserLogueado();
 }
 
-async function crearBrowserLogueado() {
+async function crearBrowserLogueado(intentos = 0) {
   const user = process.env.VECTORPOS_USER;
   const pass = process.env.VECTORPOS_PASS;
 
@@ -160,7 +160,15 @@ async function crearBrowserLogueado() {
 
     return { browser, page };
   } catch (e) {
-    await browser.close();
+    try { await browser.close(); } catch(_) {}
+    // Reintentar hasta 2 veces — el primer fallo de mañana es casi siempre
+    // un cold-start de Railway (Chromium aún levantando recursos)
+    if (intentos < 2 && !e.message.includes('Credenciales')) {
+      const delay = (intentos + 1) * 4000; // 4s, 8s
+      console.log(`🔄 VectorPOS: reintentando en ${delay/1000}s (intento ${intentos + 1}/2)...`);
+      await new Promise(r => setTimeout(r, delay));
+      return crearBrowserLogueado(intentos + 1);
+    }
     throw e;
   }
 }
@@ -361,7 +369,7 @@ async function monitorearVentasDiarias() {
 
   } catch (e) {
     console.error('❌ Error en monitoreo VectorPOS:', e.message);
-    if (browser) await browser.close();
+    if (browser) try { await browser.close(); } catch(_) {}
     return null;
   }
 }
