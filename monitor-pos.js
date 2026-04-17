@@ -141,15 +141,15 @@ async function crearBrowserLogueado(intentos = 0) {
 
     await page.goto(BASE + '/index.php?r=site/login', {
       waitUntil: 'domcontentloaded',
-      timeout: 30000,
+      timeout: 20000,
     });
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 800));
 
-    await page.type('#txtUser', user, { delay: 30 });
-    await page.type('#txtPw', pass, { delay: 30 });
+    await page.type('#txtUser', user, { delay: 20 });
+    await page.type('#txtPw', pass, { delay: 20 });
 
     await Promise.all([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 25000 }),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
       page.click('input[type="submit"]'),
     ]);
 
@@ -164,7 +164,7 @@ async function crearBrowserLogueado(intentos = 0) {
     // Reintentar hasta 2 veces — el primer fallo de mañana es casi siempre
     // un cold-start de Railway (Chromium aún levantando recursos)
     if (intentos < 2 && !e.message.includes('Credenciales')) {
-      const delay = (intentos + 1) * 4000; // 4s, 8s
+      const delay = (intentos + 1) * 3000; // 3s, 6s
       console.log(`🔄 VectorPOS: reintentando en ${delay/1000}s (intento ${intentos + 1}/2)...`);
       await new Promise(r => setTimeout(r, delay));
       return crearBrowserLogueado(intentos + 1);
