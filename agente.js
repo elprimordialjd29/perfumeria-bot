@@ -1256,8 +1256,7 @@ async function reporteRango(desde, hasta, titulo) {
 
     const prodsPOS = prodRaw
       .filter(p => !esServicio(p.nombre))
-      .sort((a, b) => b.cantidad - a.cantidad)
-      .slice(0, 10);
+      .sort((a, b) => b.cantidad - a.cantidad);
 
     const primeraHoraRango = horasData.filter(h => h.total > 0).sort((a, b) => a.hora - b.hora)[0] || null;
 
@@ -1318,7 +1317,7 @@ async function reporteRango(desde, hasta, titulo) {
 
       let productosAMostrar = [];
       if (usarFacturas) {
-        productosAMostrar = procesarFacturasParaProductos(facturasConItems).slice(0, 10);
+        productosAMostrar = procesarFacturasParaProductos(facturasConItems); // todos
       } else {
         const sumaProd = prodsPOS.reduce((s, p) => s + (p.valor || 0), 0);
         productosAMostrar = prodsPOS.map(p => {
@@ -1334,11 +1333,12 @@ async function reporteRango(desde, hasta, titulo) {
 
       if (productosAMostrar.length > 0) {
         const medallas2 = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-        msg += `\n📦 *Productos vendidos:*\n`;
+        const posEmoji = (i) => i < medallas2.length ? medallas2[i] : `${i + 1}.`;
+        msg += `\n📦 *Productos vendidos (${productosAMostrar.length}):*\n`;
         productosAMostrar.forEach((p, i) => {
           const cat = monitor.inferirCategoria(p.nombre);
           const uni = cat.startsWith('ESENCIAS') ? 'gr' : 'uds';
-          msg += `${medallas2[i]} *${p.nombre}*: ${p.cantidad} ${uni}\n`;
+          msg += `${posEmoji(i)} *${p.nombre}*: ${p.cantidad} ${uni}\n`;
         });
       }
     }
