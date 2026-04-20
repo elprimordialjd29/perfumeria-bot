@@ -646,8 +646,10 @@ async function ejecutarAccion(rawOriginal) {
 
     if (raw.startsWith('[INVENTARIO]')) {
       return await withInvDiag(async () => {
-        const resultado = await monitor.consultarAlertasInventario();
-        return monitor.generarMensajeAlertas(resultado);
+        // Usar inventario completo para mostrar todos los productos:
+        // ESENCIAS → alertas + conteo OK | ORIGINALES/ENVASES/RÉPLICAS → todos
+        const todoInv = await monitor.consultarTodoInventario();
+        return monitor.generarMensajeAlertasCompleto(todoInv);
       });
     }
 

@@ -201,9 +201,16 @@ function parsearMontoJSON(val) {
   if (typeof val === 'number') return val;
   const s = String(val).trim();
   if (!s || s === '-') return 0;
-  // Formato colombiano: tiene coma como decimal → "8.277,79"
+  // Formato colombiano con coma decimal → "8.277,79" o "18.945,00"
   if (s.includes(',')) return parsearMonto(s);
-  // Formato estándar con punto decimal → "8277.79" o "82777.916"
+  // Sin coma: detectar si el punto es separador de miles colombiano.
+  // Regla: un solo punto con exactamente 3 dígitos después → miles.
+  // "18.945" → 18945   "8.277" → 8277   "18.94" → 18.94 (2 dec, no miles)
+  const partes = s.split('.');
+  if (partes.length === 2 && partes[1].length === 3 && /^\d+$/.test(partes[0]) && /^\d+$/.test(partes[1])) {
+    return parseInt(partes[0] + partes[1], 10);
+  }
+  // Formato estándar con punto decimal → "8277.79"
   const num = parseFloat(s.replace(/[^0-9.]/g, ''));
   return isNaN(num) ? 0 : num;
 }
@@ -604,6 +611,7 @@ const UMBRALES = {
   'ESENCIAS M':      { alerta: 300, critico: 200, medida: 'gr', restock: true  },
   'ESENCIAS F':      { alerta: 300, critico: 200, medida: 'gr', restock: true  },
   'ESENCIAS U':      { alerta: 300, critico: 200, medida: 'gr', restock: true  },
+  'ESENCIAS':        { alerta: 300, critico: 200, medida: 'gr', restock: true  }, // catch-all cuando no hay M/F/U
   'REPLICA 1.1':     { alerta: 1,   critico: 1,   medida: 'u',  restock: true  },
   'ORIGINALES':      { alerta: 1,   critico: 1,   medida: 'u',  restock: true  },
   'ENVASE':          { alerta: 50,  critico: 10,  medida: 'u',  restock: true  },
@@ -1206,7 +1214,8 @@ async function consultarTodoInventario() {
     // Costo unidad: priorizar catálogo, fallback saldo
     const costoUnidad = cat.costoUnidad ||
       parsearMontoJSON(p['Costo Unidad'] ?? p['Costo Unitario'] ?? p['Costo'] ?? 0);
-    const saldo = parseFloat(p['Saldo Actual']) || 0;
+    // Usar parsearMontoJSON para manejar "18.945" (miles colombiano) correctamente
+    const saldo = parsearMontoJSON(p['Saldo Actual'] ?? p.saldo ?? 0);
 
     return {
       nombre,
@@ -1349,19 +1358,28 @@ function generarMensajeAlertas(resultado) {
 
   // Agrupar por categoría
   const ORDEN_CATS = [
-    { key: 'ESENCIAS M',     emoji: '🧪', label: 'ESENCIAS M (masculinas)' },
-    { key: 'ESENCIAS F',     emoji: '🌸', label: 'ESENCIAS F (femeninas)'  },
-    { key: 'ESENCIAS U',     emoji: '🌿', label: 'ESENCIAS U (unisex)'     },
-    { key: 'ENVASE',         emoji: '🧴', label: 'ENVASES'                 },
-    { key: 'ORIGINALES',     emoji: '✨', label: 'ORIGINALES'              },
-    { key: 'REPLICA 1.1',    emoji: '🔁', label: 'RÉPLICAS 1.1'           },
-    { key: 'CREMA CORPORAL', emoji: '🧴', label: 'CREMAS CORPORALES'       },
-    { key: 'INSUMOS VARIOS', emoji: '🔧', label: 'INSUMOS VARIOS'          },
+    { key: 'ESENCIAS M',     emoji: '🧪', label: 'ESENCIAS M (masculinas)', exacto: true  },
+    { key: 'ESENCIAS F',     emoji: '🌸', label: 'ESENCIAS F (femeninas)',  exacto: true  },
+    { key: 'ESENCIAS U',     emoji: '🌿', label: 'ESENCIAS U (unisex)',     exacto: true  },
+    { key: 'ESENCIAS',       emoji: '🧪', label: 'ESENCIAS',               exacto: false }, // catch-all sin M/F/U
+    { key: 'ENVASE',         emoji: '🧴', label: 'ENVASES',                exacto: false },
+    { key: 'ORIGINALES',     emoji: '✨', label: 'ORIGINALES',             exacto: false },
+    { key: 'REPLICA 1.1',    emoji: '🔁', label: 'RÉPLICAS 1.1',          exacto: false },
+    { key: 'CREMA CORPORAL', emoji: '🧴', label: 'CREMAS CORPORALES',      exacto: false },
+    { key: 'INSUMOS VARIOS', emoji: '🔧', label: 'INSUMOS VARIOS',         exacto: false },
   ];
 
   for (const cat of ORDEN_CATS) {
     const prods = todas.filter(p => {
       const c = (p.categoria || _inferirCategoria(p.nombre, p.medida)).toUpperCase();
+      if (cat.exacto) {
+        // Coincidencia exacta para distinguir ESENCIAS M/F/U entre sí
+        return c === cat.key;
+      }
+      if (cat.key === 'ESENCIAS') {
+        // Catch-all: solo esencias SIN letra (M/F/U)
+        return c.startsWith('ESENCIAS') && !/^ESENCIAS [MFU]$/.test(c);
+      }
       return c.includes(cat.key);
     });
     if (prods.length === 0) continue;
@@ -1377,6 +1395,8 @@ function generarMensajeAlertas(resultado) {
   const conocidas = ORDEN_CATS.map(c => c.key);
   const otros = todas.filter(p => {
     const c = (p.categoria || _inferirCategoria(p.nombre, p.medida)).toUpperCase();
+    // Excluir cualquier variante de ESENCIAS (M, F, U, o sin letra)
+    if (c.startsWith('ESENCIAS')) return false;
     return !conocidas.some(k => c.includes(k));
   });
   if (otros.length > 0) {
@@ -1389,6 +1409,77 @@ function generarMensajeAlertas(resultado) {
 
   msg += `\n─────────────────\n🤖 _Alerta automática VectorPOS_`;
   return msg;
+}
+
+/**
+ * Versión completa del inventario para el comando /inventario:
+ * - ESENCIAS: muestra bajas + conteo de las OK
+ * - ORIGINALES, ENVASES, RÉPLICAS: muestra TODOS (OK + bajos)
+ * Recibe el array completo de `consultarTodoInventario()`
+ */
+function generarMensajeAlertasCompleto(todoInventario) {
+  if (!todoInventario?.length) return '❌ No pude conectar al inventario de VectorPOS.';
+
+  const fp = formatPesos;
+  const getU = (p) => (p.medida || '').toLowerCase().match(/^(gr|g|ml)/) ? `${p.saldo}g` : `${p.saldo} u`;
+
+  const SECCIONES = [
+    { key: 'ESENCIAS',       emoji: '🧪', label: 'ESENCIAS',        todoOK: false },
+    { key: 'ENVASE',         emoji: '🧴', label: 'ENVASES',         todoOK: true  },
+    { key: 'ORIGINALES',     emoji: '✨', label: 'ORIGINALES',      todoOK: true  },
+    { key: 'REPLICA 1.1',    emoji: '🔁', label: 'RÉPLICAS 1.1',   todoOK: true  },
+    { key: 'CREMA CORPORAL', emoji: '🧴', label: 'CREMAS',          todoOK: true  },
+    { key: 'INSUMOS VARIOS', emoji: '🔧', label: 'INSUMOS VARIOS',  todoOK: false },
+  ];
+
+  let msg = `📦 *INVENTARIO — ${todoInventario.length} productos*\n`;
+  const partes = [];
+
+  for (const sec of SECCIONES) {
+    const prods = todoInventario.filter(p => {
+      const c = (p.categoria || '').toUpperCase();
+      if (sec.key === 'ESENCIAS') return c.startsWith('ESENCIAS') && !/^ESENCIAS [MFU]$/.test(c);
+      return c.includes(sec.key);
+    });
+    if (!prods.length) continue;
+
+    const umbral = Object.entries(UMBRALES).find(([k]) => sec.key.includes(k) || k.includes(sec.key));
+    const lim = umbral ? umbral[1].alerta : (sec.key.startsWith('ESENCIAS') ? 300 : 15);
+
+    const bajos  = prods.filter(p => p.saldo < lim).sort((a, b) => a.saldo - b.saldo);
+    const ok     = prods.filter(p => p.saldo >= lim).sort((a, b) => b.saldo - a.saldo);
+
+    let bloque = `\n${sec.emoji} *${sec.label}* _(${prods.length} productos)_\n`;
+
+    // Siempre mostrar los bajos/agotados
+    bajos.forEach(p => {
+      bloque += `${getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria)} *${p.nombre}*: ${getU(p)}\n`;
+    });
+
+    if (sec.todoOK) {
+      // Para categorías pequeñas: mostrar TODOS los OK
+      if (ok.length) {
+        bloque += ok.length > 0 ? `\n✅ *EN STOCK (${ok.length}):*\n` : '';
+        ok.forEach(p => { bloque += `🟢 *${p.nombre}*: ${getU(p)}\n`; });
+      }
+    } else {
+      // Para ESENCIAS e INSUMOS: solo conteo de los OK
+      if (ok.length) bloque += `\n✅ *${ok.length} ${sec.label.toLowerCase()} sobre mínimo*\n`;
+      if (!bajos.length) bloque += `✅ _Todas las ${sec.label.toLowerCase()} sobre mínimo_\n`;
+    }
+
+    // Partir el mensaje si supera 3500 chars
+    if ((msg + bloque).length > 3500) {
+      partes.push(msg);
+      msg = `📦 _(continuación)_\n`;
+    }
+    msg += bloque;
+  }
+
+  msg += `\n─────────────────\n🤖 _Inventario VectorPOS_`;
+  partes.push(msg);
+  if (partes.length === 1) return partes[0];
+  return { tipo: 'mensajes', partes };
 }
 
 // ──────────────────────────────────────────────
@@ -2143,6 +2234,7 @@ module.exports = {
   consultarTodoInventario,
   consultarInventarioPorCategoria,
   generarMensajeAlertas,
+  generarMensajeAlertasCompleto,
   crearSesionPOS,
   extraerVentasGenerales,
   extraerVentasCajero,
