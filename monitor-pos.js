@@ -744,35 +744,33 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
     console.log(`📌 URL post-login: ${urlPostLogin}`);
     await new Promise(r => setTimeout(r, 3000));
 
-    // ── 1. Cerrar popup de tour/bienvenida si existe ──
-    console.log('📌 Cerrando popups de bienvenida...');
+    // ── 1. Eliminar popup/tour del DOM a la fuerza ──
+    console.log('📌 Eliminando popups de bienvenida...');
     await page.evaluate(() => {
-      // Intentar cerrar cualquier modal/tour/popup
-      const cerrarSelectores = [
-        // Botón X de cierre
-        '.modal .close', '.modal button.close', '.tour-close', '.introjs-skipbutton',
-        '[data-dismiss="modal"]', '.shepherd-cancel-icon', '.joyride-close-tip',
-        // Botones de saltar/ignorar
-        'button[class*="close"]', 'button[class*="skip"]', 'button[class*="cancel"]',
-        'a[class*="close"]', 'a[class*="skip"]',
-        // X genérico visible
-        'span.close', 'i.close',
-      ];
-      for (const sel of cerrarSelectores) {
-        const el = document.querySelector(sel);
-        if (el) { el.click(); return `closed: ${sel}`; }
-      }
-      // Buscar por texto
-      const todos = [...document.querySelectorAll('button, a, span, i')];
-      const cerrar = todos.find(el => {
-        const t = (el.innerText || el.title || el['aria-label'] || '').trim();
-        return /^(×|✕|✖|close|skip|omitir|saltar|no gracias|cerrar)$/i.test(t);
+      // Opción nuclear: ocultar y eliminar TODOS los overlays/popups/tours
+      const palabrasClave = ['modal','overlay','tour','intro','popup','backdrop',
+                             'tooltip','popover','joyride','shepherd','welcome','bienvenid'];
+      palabrasClave.forEach(cls => {
+        document.querySelectorAll(`[class*="${cls}"], [id*="${cls}"]`).forEach(el => {
+          if (el === document.body || el === document.documentElement) return;
+          el.remove();
+        });
       });
-      if (cerrar) { cerrar.click(); return `closed by text`; }
-      // Escape key
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      // Restaurar scroll bloqueado por modales
+      document.body.style.overflow   = 'auto';
+      document.body.style.paddingRight = '0';
+      document.documentElement.style.overflow = 'auto';
+      document.body.classList.remove('modal-open','has-overlay','overflow-hidden');
+
+      // Intentar también botones de cierre por si acaso
+      [...document.querySelectorAll('button, a, span')].forEach(el => {
+        const t = (el.innerText || el.textContent || '').trim();
+        if (/^(×|✕|✖|x)$/i.test(t) || el.getAttribute('aria-label') === 'Close') el.click();
+      });
     });
-    await new Promise(r => setTimeout(r, 1500));
+    // Escape key también
+    await page.keyboard.press('Escape');
+    await new Promise(r => setTimeout(r, 1000));
 
     // ── 2. Navegar a Inventario desde el menú principal ──
     console.log('📌 Buscando menú Inventario...');
@@ -803,6 +801,15 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
     });
     await new Promise(r => setTimeout(r, 800));
 
+    // Seleccionar "Todos" ANTES del click de carga
+    await page.evaluate(() => {
+      document.querySelectorAll('select').forEach(sel => {
+        const todos = [...sel.options].find(o => /todos|all|consolidado/i.test(o.text));
+        if (todos) { sel.value = todos.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      });
+    });
+    await new Promise(r => setTimeout(r, 800));
+
     const clickedCargar = await page.evaluate((findClick) => {
       return eval(findClick)([
         'Cargar Lista', 'Cargar lista', 'Cargar', 'cargar',
@@ -810,6 +817,19 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
       ]);
     }, _JS_FIND_AND_CLICK);
     console.log(`📌 Click CargarLista: ${clickedCargar || 'no encontrado'}`);
+
+    // Si no se encontró por texto, buscar por atributos de botón directamente
+    if (!clickedCargar) {
+      await page.evaluate(() => {
+        const btns = [...document.querySelectorAll('button, input[type="button"], input[type="submit"], a.btn')];
+        // Buscar el botón más relevante visible
+        const btn = btns.find(b => {
+          const t = (b.innerText || b.value || b.textContent || '').trim().toLowerCase();
+          return t.includes('carg') || t.includes('buscar') || t.includes('ver') || t.includes('consult');
+        });
+        if (btn) { btn.click(); return btn.innerText || btn.value; }
+      });
+    }
 
     // ── 5. Esperar XHR completo (10s si hubo click, 5s si no) ──
     const ESPERA_MS = clickedCargar ? 10000 : 5000;
