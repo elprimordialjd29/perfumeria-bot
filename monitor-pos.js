@@ -140,11 +140,12 @@ setInterval(async () => {
   }
 }, 60000); // revisar cada minuto
 
+// --single-process solo en Linux (Railway/Docker). En Windows causa "frame detached"
 const PUPPETEER_ARGS = [
   '--no-sandbox', '--disable-setuid-sandbox',
   '--disable-gpu', '--disable-dev-shm-usage',
-  '--disable-software-rasterizer', '--no-zygote',
-  '--single-process',
+  '--disable-software-rasterizer',
+  ...(process.platform === 'linux' ? ['--no-zygote', '--single-process'] : []),
 ];
 
 async function lanzarBrowser() {
@@ -709,18 +710,23 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
       if (!_capturarXHR) return;
       const url = res.url();
       const ct  = res.headers()['content-type'] || '';
-      if (!ct.includes('json')) return;
+      // Capturar JSON, texto plano y otros (VectorPOS puede responder como text/html o text/plain)
+      const esCapturableContentType = ct.includes('json') || ct.includes('text') || ct.includes('octet');
+      if (!esCapturableContentType) return;
       xhrCapturadas.push(url.replace(APP_BASE, ''));
       try {
         const text = await res.text();
-        const d = JSON.parse(text);
+        // Intentar parsear como JSON
+        let d = null;
+        try { d = JSON.parse(text); } catch(_) {}
         const arr = d?.datos || d?.data || d?.rows || d?.items ||
                     d?.productos || d?.saldos || (Array.isArray(d) ? d : null);
         if (!arr?.length) return;
         const first = arr[0];
         const hasNombre = !!(first?.Nombre || first?.nombre || first?.NombreProducto || first?.name);
         const hasSaldo  = first?.['Saldo Actual'] !== undefined || first?.saldo !== undefined ||
-                          first?.SaldoActual !== undefined || first?.stock !== undefined;
+                          first?.SaldoActual !== undefined || first?.stock !== undefined ||
+                          first?.Cantidad !== undefined || first?.cantidad !== undefined;
         if (hasNombre) {
           console.log(`📡 XHR candidato: ${url.replace(APP_BASE,'')} (${arr.length} items, saldo=${hasSaldo})`);
           // SIEMPRE guardar el más grande — el primer XHR suele ser un widget
@@ -792,60 +798,123 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
     console.log(`📌 Click Saldos: ${clickedSaldos || 'no encontrado'}`);
     if (clickedSaldos) await new Promise(r => setTimeout(r, 3000));
 
-    // ── 4. Seleccionar "Todos" en dropdown y click "Cargar Lista" ──
+    // ── 4. Seleccionar "Todos" en dropdown ──
     await page.evaluate(() => {
       document.querySelectorAll('select').forEach(sel => {
         const todos = [...sel.options].find(o => /todos|all|consolidado/i.test(o.text));
-        if (todos) { sel.value = todos.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+        if (todos) {
+          sel.value = todos.value;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          sel.dispatchEvent(new Event('input',  { bubbles: true }));
+        }
       });
     });
     await new Promise(r => setTimeout(r, 800));
 
-    // Seleccionar "Todos" ANTES del click de carga
-    await page.evaluate(() => {
-      document.querySelectorAll('select').forEach(sel => {
-        const todos = [...sel.options].find(o => /todos|all|consolidado/i.test(o.text));
-        if (todos) { sel.value = todos.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
-      });
+    // ── 5. Click "Cargar Lista" — múltiples estrategias para SPAs ──
+    // Primero loguear botones visibles para Railway (debug de click fallido)
+    const btnDebug = await page.evaluate(() => {
+      return [...document.querySelectorAll('button, input[type="button"], input[type="submit"], a.btn, [role="button"]')]
+        .map(b => `"${(b.innerText||b.value||b.id||'').replace(/\s+/g,' ').trim().substring(0,25)}" id="${b.id||''}"`)
+        .join(' | ');
     });
-    await new Promise(r => setTimeout(r, 800));
+    console.log(`📌 [INV] Botones en DOM: ${btnDebug || '(ninguno)'}`);
 
-    const clickedCargar = await page.evaluate((findClick) => {
-      return eval(findClick)([
-        'Cargar Lista', 'Cargar lista', 'Cargar', 'cargar',
-        'Buscar', 'Ver Saldos', 'Consultar', 'Ver',
-      ]);
-    }, _JS_FIND_AND_CLICK);
-    console.log(`📌 Click CargarLista: ${clickedCargar || 'no encontrado'}`);
+    const clickResult = await page.evaluate(() => {
+      const allBtns = [...document.querySelectorAll('button, input[type="button"], input[type="submit"], a.btn, [role="button"]')];
 
-    // Si no se encontró por texto, buscar por atributos de botón directamente
-    if (!clickedCargar) {
-      await page.evaluate(() => {
-        const btns = [...document.querySelectorAll('button, input[type="button"], input[type="submit"], a.btn')];
-        // Buscar el botón más relevante visible
-        const btn = btns.find(b => {
-          const t = (b.innerText || b.value || b.textContent || '').trim().toLowerCase();
-          return t.includes('carg') || t.includes('buscar') || t.includes('ver') || t.includes('consult');
-        });
-        if (btn) { btn.click(); return btn.innerText || btn.value; }
+      // PRIO 1: por ID (patrón VectorPOS conocido)
+      const byId = document.querySelector(
+        '#btnCargar, #btnBuscar, #btnConsultar, #btnVer, ' +
+        '[id*="Cargar"], [id*="cargar"], [id*="Buscar"], [id*="buscar"]'
+      );
+      if (byId) {
+        byId.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        byId.click();
+        return `id:${byId.id || byId.tagName}`;
+      }
+
+      // PRIO 2: texto que contenga 'carg', 'buscar', 'ver saldo', 'filtrar'
+      const byText = allBtns.find(el => {
+        const t = (el.innerText || el.value || el.textContent || '')
+                   .replace(/\s+/g,' ').trim().toLowerCase();
+        return t.includes('carg') || t.includes('buscar lista') || t.includes('ver saldo') ||
+               t.includes('filtrar') || t === 'buscar';
       });
+      if (byText) {
+        byText.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        byText.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
+        byText.dispatchEvent(new MouseEvent('click',     { bubbles: true, cancelable: true }));
+        byText.click();
+        return `text:"${(byText.innerText||byText.value||'').replace(/\s+/g,' ').trim().substring(0,30)}"`;
+      }
+
+      // PRIO 3: botón primary/success que no sea cancel/cerrar
+      const primary = allBtns.find(el => {
+        const cls = el.className || '';
+        return /btn-primary|btn-success|btn-info/.test(cls) &&
+               !/(cancel|cerrar|close|back|volver|nuevo|agregar|add)/i.test(el.innerText || '');
+      });
+      if (primary) {
+        primary.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        primary.click();
+        return `primary:"${(primary.innerText||'').replace(/\s+/g,' ').trim().substring(0,30)}"`;
+      }
+
+      // PRIO 4: CUALQUIER botón visible (a veces el único botón es "Cargar")
+      const visible = allBtns.find(el => {
+        const s = window.getComputedStyle(el);
+        return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
+      });
+      if (visible) {
+        visible.click();
+        return `any:"${(visible.innerText||visible.value||'').replace(/\s+/g,' ').trim().substring(0,30)}"`;
+      }
+      return null;
+    });
+    console.log(`📌 Click CargarLista: ${clickResult || 'no encontrado'}`);
+
+    // Fallback: Puppeteer native click si el evaluate no encontró nada
+    if (!clickResult) {
+      try {
+        // Intentar selector directo
+        const sel = await page.$('#btnCargar, #btnBuscar, button');
+        if (sel) {
+          await sel.click();
+          console.log('📌 Puppeteer native click ejecutado');
+        }
+      } catch(e) {
+        console.log('📌 Puppeteer click fallback falló:', e.message);
+      }
     }
 
-    // ── 5. Esperar XHR completo (10s si hubo click, 5s si no) ──
-    const ESPERA_MS = clickedCargar ? 10000 : 5000;
-    await new Promise(r => setTimeout(r, ESPERA_MS));
+    // ── 6. Esperar que la tabla se llene (waitForFunction + timeout fijo) ──
+    try {
+      await page.waitForFunction(
+        () => document.querySelectorAll('table tbody tr').length > 5,
+        { timeout: 15000, polling: 800 }
+      );
+      console.log('✅ Tabla DOM lista');
+    } catch(e) {
+      console.log('⚠️ Tabla no apareció en 15s — esperando XHR adicional...');
+      await new Promise(r => setTimeout(r, 5000));
+    }
 
-    // Tomar el mejor XHR acumulado
+    // ── 7. Tomar datos: primero DOM (más confiable), XHR como secundario ──
     console.log(`📌 XHR acumulado: ${_mejorXHR?.length || 0} items`);
-    if (_mejorXHR?.length > 5) {
+    const rowsDom = await _leerTablaInventario(page);
+    console.log(`📊 Tabla DOM: ${rowsDom.length} filas`);
+
+    if (rowsDom.length > 5) {
+      // DOM es confiable si la tabla se llenó
+      saldosData = rowsDom;
+      console.log(`✅ Usando tabla DOM: ${rowsDom.length} productos`);
+    } else if (_mejorXHR?.length > 5) {
+      // XHR como respaldo si DOM está vacío
       saldosData = _mejorXHR;
-    } else {
-      // Fallback: leer tabla DOM
-      const rows = await _leerTablaInventario(page);
-      if (rows.length > 5) {
-        console.log(`✅ Tabla DOM: ${rows.length} filas`);
-        saldosData = rows;
-      }
+      console.log(`✅ Usando XHR: ${_mejorXHR.length} productos`);
+    } else if (rowsDom.length > 0) {
+      saldosData = rowsDom; // aunque sean pocos, tomar los que hay
     }
 
     // Screenshot del estado actual (para diagnóstico si hay pocos productos)
