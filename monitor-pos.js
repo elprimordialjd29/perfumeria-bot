@@ -6,10 +6,64 @@
  * requiere JavaScript del cliente.
  */
 
-const puppeteer = require('puppeteer');
-const db = require('./database');
+const puppeteer  = require('puppeteer');
+const http       = require('https');
+const { exec }   = require('child_process');
+const db         = require('./database');
 
 const BASE = 'https://pos.vectorpos.com.co';
+
+// ──────────────────────────────────────────────
+// AUTO-REPARACIÓN — matar procesos Chrome zombie
+// ──────────────────────────────────────────────
+function _matarChromesZombie() {
+  return new Promise(resolve => {
+    // En Railway (Linux) matar cualquier chromium/chrome colgado
+    exec('pkill -9 -f "chromium|chrome" 2>/dev/null; true', { timeout: 5000 }, () => resolve());
+  });
+}
+
+// Test de conectividad HTTP simple (sin Puppeteer)
+function _testConectividadVectorPOS() {
+  return new Promise(resolve => {
+    const req = http.get(BASE + '/index.php?r=site/login', { timeout: 8000 }, res => {
+      resolve({ ok: true, status: res.statusCode });
+      res.destroy();
+    });
+    req.on('error', e => resolve({ ok: false, error: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+  });
+}
+
+// Rutina completa de auto-reparación
+async function autoReparar(motivo = '') {
+  console.log(`🔧 Auto-reparación iniciada${motivo ? ': ' + motivo : ''}...`);
+  const pasos = [];
+
+  // 1. Matar Chrome zombie
+  await _matarChromesZombie();
+  pasos.push('🔪 Procesos Chrome zombie eliminados');
+
+  // 2. Resetear semáforo
+  const slotsAntes = _browserSlots;
+  const colaAntes  = _browserQueue.length;
+  _browserSlots = 0;
+  _browserAdquiridoEn = null;
+  // Vaciar cola para que no queden peticiones viejas bloqueadas
+  _browserQueue.length = 0;
+  pasos.push(`♻️ Semáforo reseteado (slots: ${slotsAntes} → 0, cola: ${colaAntes} → 0)`);
+
+  // 3. Probar conectividad a VectorPOS
+  const conn = await _testConectividadVectorPOS();
+  if (conn.ok) {
+    pasos.push(`🌐 VectorPOS accesible (HTTP ${conn.status})`);
+  } else {
+    pasos.push(`⚠️ VectorPOS no responde: ${conn.error}`);
+  }
+
+  console.log('✅ Auto-reparación completada:', pasos.join(' | '));
+  return { ok: conn.ok, pasos };
+}
 
 // ──────────────────────────────────────────────
 // NOTIFICADOR — bot.js inyecta esta función al iniciar
@@ -62,26 +116,20 @@ function _releaseBrowser() {
   }
 }
 
-// ── WATCHDOG: detecta semáforo bloqueado y lo resetea automáticamente ──
+// ── WATCHDOG: detecta bloqueo y ejecuta auto-reparación completa ──
 const WATCHDOG_TIMEOUT_MS = 240000; // 4 minutos sin liberar = bloqueado
-setInterval(() => {
+setInterval(async () => {
   if (_browserSlots > 0 && _browserAdquiridoEn) {
     const bloqueadoMs = Date.now() - _browserAdquiridoEn;
     if (bloqueadoMs > WATCHDOG_TIMEOUT_MS) {
       const minutos = Math.round(bloqueadoMs / 60000);
-      console.warn(`⚠️  WATCHDOG: semáforo bloqueado ${minutos}min — reseteando automáticamente`);
-      _browserSlots = 0;
-      _browserAdquiridoEn = null;
-      // Desbloquear peticiones en cola
-      const pendientes = _browserQueue.length;
-      while (_browserQueue.length > 0) {
-        const next = _browserQueue.shift();
-        next();
-      }
+      console.warn(`⚠️  WATCHDOG: Chromium bloqueado ${minutos}min — iniciando auto-reparación`);
+      const { ok, pasos } = await autoReparar(`watchdog ${minutos}min`);
       _notificar(
-        `⚠️ *Auto-diagnóstico Chu:* Chromium estuvo bloqueado ${minutos} min.\n` +
-        `✅ Semáforo reseteado automáticamente.\n` +
-        (pendientes > 0 ? `🔄 ${pendientes} consulta(s) pendiente(s) reactivadas.` : '')
+        `🔧 *Auto-reparación ejecutada* (Chromium bloqueado ${minutos} min)\n\n` +
+        pasos.map(p => `• ${p}`).join('\n') + '\n\n' +
+        (ok ? `✅ VectorPOS accesible. Intenta tu consulta de nuevo.`
+             : `⚠️ VectorPOS no responde. Puede haber un corte externo.`)
       );
     }
   }
@@ -214,8 +262,10 @@ async function crearBrowserLogueado(intentos = 0) {
 
     // Reintentar 1 vez en cold-start / timeout (no en errores definitivos)
     if (intentos < 1 && !['credenciales', 'red', 'servidor_caido'].includes(tipo)) {
-      console.log(`🔄 VectorPOS: reintentando en 4s...`);
-      await new Promise(r => setTimeout(r, 4000));
+      // Antes de reintentar: auto-reparar (matar Chrome zombie + reset semáforo)
+      console.log(`🔧 VectorPOS: auto-reparando antes de reintentar...`);
+      await autoReparar('login fallido');
+      await new Promise(r => setTimeout(r, 3000));
       return crearBrowserLogueado(intentos + 1);
     }
 
@@ -1921,9 +1971,13 @@ function obtenerEstadoSistema() {
   };
 }
 
-function generarMensajeDiagnostico() {
+async function generarMensajeDiagnostico() {
   const s = obtenerEstadoSistema();
   const semEmoji = s.semaforo.slots_usados > 0 ? '🔴' : '🟢';
+
+  // Test de conectividad en tiempo real
+  const conn = await _testConectividadVectorPOS();
+
   const lines = [
     `🔍 *Diagnóstico del sistema*`,
     ``,
@@ -1934,19 +1988,28 @@ function generarMensajeDiagnostico() {
       ? `⚠️ Bloqueado hace: ${s.semaforo.bloqueado_min} min`
       : `✅ Sin bloqueos`,
     ``,
-    `*Último error VectorPOS:*`,
+    `*Conectividad VectorPOS:*`,
+    conn.ok ? `🟢 Accesible (HTTP ${conn.status})` : `🔴 Sin respuesta: ${conn.error}`,
+    ``,
+    `*Último error:*`,
   ];
 
   if (s.ultimo_error) {
     const fecha = new Date(s.ultimo_error.fecha).toLocaleTimeString('es-CO');
-    lines.push(`❌ Tipo: ${s.ultimo_error.tipo}`);
+    lines.push(`❌ Tipo: *${s.ultimo_error.tipo}*`);
     lines.push(`⏰ Hora: ${fecha}`);
-    lines.push(`📝 ${s.ultimo_error.mensaje.substring(0, 120)}`);
+    lines.push(`📝 ${s.ultimo_error.mensaje.substring(0, 100)}`);
   } else {
     lines.push(`✅ Sin errores registrados`);
   }
 
   lines.push(``, `*Sistema:*`, `⏱ Uptime: ${s.uptime_min} min`);
+
+  // Sugerir acción si hay problemas
+  if (!conn.ok || s.semaforo.bloqueado_ms > 0) {
+    lines.push(``, `💡 Escribe /reconectar para forzar reparación`);
+  }
+
   return lines.join('\n');
 }
 
@@ -1982,4 +2045,5 @@ module.exports = {
   setNotificador,
   obtenerEstadoSistema,
   generarMensajeDiagnostico,
+  autoReparar,
 };

@@ -156,7 +156,8 @@ bot.on('message', async (msg) => {
     '/replicas': 'réplicas',         '/restock': 'restock',
     '/faltantes': 'faltantes',       '/balance': 'balance',
     '/gastos': 'gastos',             '/redes': 'redes',
-    '/analisis': 'analisis',         '/diagnostico': 'diagnostico',
+    '/analisis': 'analisis',
+    '/diagnostico': 'diagnostico',   '/reconectar': 'reconectar',
   };
   const cmdBase = texto.split('@')[0].toLowerCase();
   if (SLASH_MAP[cmdBase]) texto = SLASH_MAP[cmdBase];
@@ -164,10 +165,24 @@ bot.on('message', async (msg) => {
   const nombre = msg.from?.first_name || chatId;
   console.log(`📩 [${new Date().toLocaleTimeString('es-CO')}] ${nombre}: ${texto.substring(0, 80)}`);
 
-  // Diagnóstico rápido (admin only, sin pasar por agente)
-  if (texto === 'diagnostico' && esAdmin) {
-    const diag = monitor.generarMensajeDiagnostico();
+  // ── Comandos de sistema (admin only, sin pasar por agente) ──
+  if (esAdmin && texto === 'diagnostico') {
+    await bot.sendChatAction(chatId, 'typing');
+    const diag = await monitor.generarMensajeDiagnostico();
     await enviarMensaje(chatId, diag);
+    return;
+  }
+
+  if (esAdmin && texto === 'reconectar') {
+    await enviarMensaje(chatId, '🔧 Iniciando reparación...');
+    const { ok, pasos } = await monitor.autoReparar('manual');
+    const resumen =
+      `🔧 *Reparación completada*\n\n` +
+      pasos.map(p => `• ${p}`).join('\n') + '\n\n' +
+      (ok
+        ? `✅ VectorPOS accesible. Ya puedes usar /mes o /hoy.`
+        : `⚠️ VectorPOS sin respuesta. Puede haber un corte externo.\nIntenta en unos minutos.`);
+    await enviarMensaje(chatId, resumen);
     return;
   }
 
@@ -412,7 +427,8 @@ async function postIniciar() {
       { command: 'balance',      description: 'Balance crítico de inventario' },
       { command: 'gastos',        description: 'Gastos del mes' },
       { command: 'redes',         description: 'Checklist de redes sociales hoy' },
-      { command: 'diagnostico',   description: 'Estado y diagnóstico del sistema' },
+      { command: 'diagnostico',   description: '🔍 Estado y diagnóstico del sistema' },
+      { command: 'reconectar',    description: '🔧 Forzar reparación de VectorPOS' },
     ]);
     console.log('✅ Comandos / registrados');
   } catch(e) {

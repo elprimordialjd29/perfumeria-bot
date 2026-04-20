@@ -3095,6 +3095,8 @@ function mensajeMenu() {
     `📱 *REDES*\n` +
     `23·Checklist hoy  24·Plan semana\n\n` +
     `⚙️ *ADMIN*  R·Requerimiento  V·Ver reqs  E·Excel\n\n` +
+    `🔧 *SISTEMA*\n` +
+    `/diagnostico · /reconectar\n\n` +
     `_hoy · ayer · semana · mes · caja · cajeros · inventario · restock · faltantes · balance · analisis_`
   );
 }
