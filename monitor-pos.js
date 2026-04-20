@@ -663,19 +663,39 @@ let _ultimoDiagInventario = null;
 function obtenerDiagInventario() { return _ultimoDiagInventario; }
 
 async function _obtenerSaldosBrutos() {
-  // Timeout global: liberar semáforo en máximo 75 segundos
-  const _timeout = new Promise((_, rej) =>
-    setTimeout(() => rej(new Error('Timeout inventario (75s)')), 75000)
-  );
-  return Promise.race([_obtenerSaldosBrutosImpl(), _timeout]);
+  // Timeout global: cierra el browser Y libera el semáforo si tarda >70s
+  let _timeoutTimer = null;
+  let _browserRef   = null;       // referencia para poder cerrar desde afuera
+
+  const _timeoutPromise = new Promise((_, rej) => {
+    _timeoutTimer = setTimeout(async () => {
+      console.warn('⏱  Timeout inventario 70s — cerrando browser forzosamente');
+      if (_browserRef) {
+        try { await _browserRef.close(); } catch(_) {}
+        _browserRef = null;
+      }
+      rej(new Error('Timeout inventario (70s)'));
+    }, 70000);
+  });
+
+  // Wrapper que expone la referencia del browser
+  const _implConRef = async () => {
+    const result = await _obtenerSaldosBrutosImpl((b) => { _browserRef = b; });
+    clearTimeout(_timeoutTimer);
+    _browserRef = null;
+    return result;
+  };
+
+  return Promise.race([_implConRef(), _timeoutPromise]);
 }
 
-async function _obtenerSaldosBrutosImpl() {
+async function _obtenerSaldosBrutosImpl(onBrowserReady) {
   _ultimoDiagInventario = null;
   const diag = [];
   let browser = null;
   try {
     browser = await lanzarBrowser();
+    if (onBrowserReady) onBrowserReady(browser); // exponer ref para timeout externo
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
     await page.setViewport({ width: 1280, height: 800 });
@@ -1082,13 +1102,12 @@ async function obtenerCategoriaProductos() {
 async function consultarTodoInventario() {
   console.log('\n📦 Consultando inventario completo...');
 
-  // Obtener saldos y catálogo en paralelo (sesiones separadas)
-  const [saldos, catalogo] = await Promise.all([
-    _obtenerSaldosBrutos(),
-    _obtenerCatalogoProductos(),
-  ]);
-
+  // Ejecutar SECUENCIALMENTE para no bloquear el semáforo del browser
+  // (paralelo causaba que catalogo esperara 70s+ en cola y el total superaba 3 min)
+  const saldos  = await _obtenerSaldosBrutos();
   if (!saldos) return null;
+
+  const catalogo = await _obtenerCatalogoProductos();
 
   // Filtrar productos de servicio (no son inventario físico)
   const esServicio = n => {

@@ -190,8 +190,12 @@ bot.on('message', async (msg) => {
   const COMANDOS_POS = [
     'hoy', 'mes', 'mes anterior', 'semana', 'reporte general',
     'cajeros', 'hora pico', 'caja', 'productos más vendidos', 'analisis',
+    // Inventario: también lanza Puppeteer
+    'inventario', 'esencias', 'envases', 'originales', 'réplicas',
+    'restock', 'faltantes', 'balance',
   ];
-  const esComandoPOS = COMANDOS_POS.includes(texto.toLowerCase());
+  const esComandoPOS = COMANDOS_POS.some(c => texto.toLowerCase() === c ||
+    texto.toLowerCase().startsWith(c + ' ') || texto.toLowerCase().startsWith(c + ':'));
 
   // Para comandos POS: aviso inmediato + 3 min de timeout
   // Para el resto: solo typing + 95s de timeout
