@@ -744,189 +744,118 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
     console.log(`📌 URL post-login: ${urlPostLogin}`);
     await new Promise(r => setTimeout(r, 3000));
 
-    // Screenshot post-login para diagnóstico (se envía solo la primera vez o si hay error)
+    // ── 1. Cerrar popup de tour/bienvenida si existe ──
+    console.log('📌 Cerrando popups de bienvenida...');
+    await page.evaluate(() => {
+      // Intentar cerrar cualquier modal/tour/popup
+      const cerrarSelectores = [
+        // Botón X de cierre
+        '.modal .close', '.modal button.close', '.tour-close', '.introjs-skipbutton',
+        '[data-dismiss="modal"]', '.shepherd-cancel-icon', '.joyride-close-tip',
+        // Botones de saltar/ignorar
+        'button[class*="close"]', 'button[class*="skip"]', 'button[class*="cancel"]',
+        'a[class*="close"]', 'a[class*="skip"]',
+        // X genérico visible
+        'span.close', 'i.close',
+      ];
+      for (const sel of cerrarSelectores) {
+        const el = document.querySelector(sel);
+        if (el) { el.click(); return `closed: ${sel}`; }
+      }
+      // Buscar por texto
+      const todos = [...document.querySelectorAll('button, a, span, i')];
+      const cerrar = todos.find(el => {
+        const t = (el.innerText || el.title || el['aria-label'] || '').trim();
+        return /^(×|✕|✖|close|skip|omitir|saltar|no gracias|cerrar)$/i.test(t);
+      });
+      if (cerrar) { cerrar.click(); return `closed by text`; }
+      // Escape key
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    await new Promise(r => setTimeout(r, 1500));
+
+    // ── 2. Navegar a Inventario desde el menú principal ──
+    console.log('📌 Buscando menú Inventario...');
+    _capturarXHR = true; // activar captura ANTES de navegar
+
+    const clickedInv = await page.evaluate((findClick) => {
+      return eval(findClick)(['Inventario', 'inventario', 'INVENTARIO']);
+    }, _JS_FIND_AND_CLICK);
+    console.log(`📌 Click Inventario: ${clickedInv || 'no encontrado'}`);
+    await new Promise(r => setTimeout(r, 3000));
+
+    // ── 3. Buscar "Consultar saldos" o "Saldos" dentro del submenú ──
+    const clickedSaldos = await page.evaluate((findClick) => {
+      return eval(findClick)([
+        'Consultar saldos', 'Consultar Saldos', 'Saldos', 'saldos',
+        'Kardex', 'kardex', 'Stock', 'Existencias',
+      ]);
+    }, _JS_FIND_AND_CLICK);
+    console.log(`📌 Click Saldos: ${clickedSaldos || 'no encontrado'}`);
+    if (clickedSaldos) await new Promise(r => setTimeout(r, 3000));
+
+    // ── 4. Seleccionar "Todos" en dropdown y click "Cargar Lista" ──
+    await page.evaluate(() => {
+      document.querySelectorAll('select').forEach(sel => {
+        const todos = [...sel.options].find(o => /todos|all|consolidado/i.test(o.text));
+        if (todos) { sel.value = todos.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      });
+    });
+    await new Promise(r => setTimeout(r, 800));
+
+    const clickedCargar = await page.evaluate((findClick) => {
+      return eval(findClick)([
+        'Cargar Lista', 'Cargar lista', 'Cargar', 'cargar',
+        'Buscar', 'Ver Saldos', 'Consultar', 'Ver',
+      ]);
+    }, _JS_FIND_AND_CLICK);
+    console.log(`📌 Click CargarLista: ${clickedCargar || 'no encontrado'}`);
+
+    // ── 5. Esperar XHR completo (10s si hubo click, 5s si no) ──
+    const ESPERA_MS = clickedCargar ? 10000 : 5000;
+    await new Promise(r => setTimeout(r, ESPERA_MS));
+
+    // Tomar el mejor XHR acumulado
+    console.log(`📌 XHR acumulado: ${_mejorXHR?.length || 0} items`);
+    if (_mejorXHR?.length > 5) {
+      saldosData = _mejorXHR;
+    } else {
+      // Fallback: leer tabla DOM
+      const rows = await _leerTablaInventario(page);
+      if (rows.length > 5) {
+        console.log(`✅ Tabla DOM: ${rows.length} filas`);
+        saldosData = rows;
+      }
+    }
+
+    // Screenshot del estado actual (para diagnóstico si hay pocos productos)
     try {
       const buf1 = await page.screenshot({ fullPage: false });
-      const p1   = `/tmp/inv_login_${Date.now()}.png`;
+      const p1   = `/tmp/inv_state_${Date.now()}.png`;
       require('fs').writeFileSync(p1, buf1);
       if (typeof _notificadorFoto === 'function') {
-        _notificadorFoto(p1, `🔐 Post-login VectorPOS: ${urlPostLogin.replace(APP_BASE,'')}`).catch(() => {});
+        _notificadorFoto(p1, `📦 Estado inventario: ${_mejorXHR?.length || 0} XHR items | ${page.url().replace(APP_BASE,'')}`).catch(() => {});
       }
     } catch(_) {}
 
-    // ── Intentar rutas hash directas de la SPA ──
-    const hashRutas = [
-      `${APP_BASE}/#/kardex/saldos`,
-      `${APP_BASE}/#/kardex`,
-      `${APP_BASE}/#/consultar-saldos`,
-      `${APP_BASE}/#/inventario/saldos`,
-      `${APP_BASE}/#/inventario`,
-      `${APP_BASE}/#/saldos`,
-      `${APP_BASE}/#/stock`,
-    ];
-
-    for (const url of hashRutas) {
-      if (saldosData) break;
-      const hash = url.replace(APP_BASE, '');
-      console.log(`📌 SPA hash → ${hash}`);
-      try {
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 12000 });
-        await new Promise(r => setTimeout(r, 3000));
-
-        // Seleccionar "Todos" en el dropdown de lista de inventario
-        await page.evaluate(() => {
-          const selects = document.querySelectorAll('select');
-          selects.forEach(sel => {
-            const opts = [...sel.options];
-            const todos = opts.find(o => /todos|all|consolidado/i.test(o.text));
-            if (todos) { sel.value = todos.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
-          });
-        });
-        await new Promise(r => setTimeout(r, 800));
-
-        // Activar XHR y hacer click en "Cargar Lista"
-        _capturarXHR = true;
-        const clickedCargar = await page.evaluate((findClick) => {
-          return eval(findClick)([
-            'Cargar Lista', 'Cargar lista', 'cargar lista',
-            'Cargar', 'cargar', 'Buscar', 'Ver Saldos', 'Consultar',
-          ]);
-        }, _JS_FIND_AND_CLICK);
-
-        const ESPERA_MS = clickedCargar ? 10000 : 5000;
-        if (clickedCargar) console.log(`  ↳ Click en "${clickedCargar}", esperando ${ESPERA_MS/1000}s para acumular XHR...`);
-        // Esperar TODO el tiempo aunque lleguen XHR — queremos el más grande
-        await new Promise(r => setTimeout(r, ESPERA_MS));
-
-        // Tomar el mejor XHR acumulado (el más grande = lista completa)
-        const mejorActual = _mejorXHR;
-        console.log(`  ↳ XHR acumuladas: mejor tiene ${mejorActual?.length || 0} items`);
-        if (mejorActual?.length > 5) {
-          console.log(`✅ Usando mejor XHR: ${mejorActual.length} items`);
-          saldosData = mejorActual;
-          break;
-        }
-
-        // Fallback DOM
-        const rows = await _leerTablaInventario(page);
-        if (rows.length > 5) {
-          console.log(`✅ Tabla DOM en ${hash}: ${rows.length} filas`);
-          saldosData = rows;
-          break;
-        }
-
-        const info = await page.evaluate(() => ({
-          url: location.href.replace(location.origin, ''),
-          title: document.title,
-          h1: document.querySelector('h1,h2,.page-title,.titulo')?.innerText?.substring(0,50) || '',
-          rows: document.querySelectorAll('table tr').length,
-          tablasIds: [...document.querySelectorAll('table')].map(t => t.id || t.className).slice(0,5).join(','),
-        }));
-        const linea = `${hash} → title="${info.title}" h1="${info.h1}" rows=${info.rows} tablas="${info.tablasIds}"`;
-        diag.push(linea);
-        console.log('  ↳', linea);
-
-      } catch(e) {
-        const linea = `${hash} → ERROR: ${e.message.substring(0,60)}`;
-        diag.push(linea);
-        console.log('  ↳', linea);
-      }
-    }
-
-    // ── Navegar por el menú de la SPA si las rutas hash no funcionaron ──
-    if (!saldosData) {
-      console.log('📌 Navegando menú SPA...');
-      await page.goto(APP_BASE, { waitUntil: 'networkidle2', timeout: 12000 });
-      await new Promise(r => setTimeout(r, 3000));
-
-      // Intentar secuencias de navegación comunes
-      const secuencias = [
-        ['Kardex', 'Consultar saldos'],
-        ['Inventario', 'Consultar saldos'],
-        ['Kardex', 'Saldos'],
-        ['Inventario', 'Saldos'],
-        ['Consultar saldos'],
-        ['Saldos'],
-        ['Kardex'],
-      ];
-
-      for (const pasos of secuencias) {
-        if (saldosData) break;
-        for (const paso of pasos) {
-          const clicked = await page.evaluate((findClick, texto) => eval(findClick)([texto]), _JS_FIND_AND_CLICK, paso);
-          console.log(`  ↳ Click "${paso}": ${clicked ? 'OK' : 'no encontrado'}`);
-          if (clicked) await new Promise(r => setTimeout(r, 2500));
-        }
-
-        const clickedCargar = await page.evaluate((findClick) =>
-          eval(findClick)(['Cargar Lista', 'Cargar lista', 'Cargar', 'cargar', 'Ver Saldos']),
-          _JS_FIND_AND_CLICK
-        );
-        // Seleccionar "Todos" en dropdown
-        await page.evaluate(() => {
-          document.querySelectorAll('select').forEach(sel => {
-            const todos = [...sel.options].find(o => /todos|all|consolidado/i.test(o.text));
-            if (todos) { sel.value = todos.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
-          });
-        });
-        await new Promise(r => setTimeout(r, 500));
-
-        _capturarXHR = true;
-        if (clickedCargar) {
-          console.log(`  ↳ Click "Cargar Lista", esperando...`);
-          await new Promise(r => setTimeout(r, 6000));
-        }
-
-        if (!saldosData && _mejorXHR?.length > 2) { saldosData = _mejorXHR; break; }
-
-        if (!saldosData) {
-          const rows = await _leerTablaInventario(page);
-          if (rows.length > 2) { saldosData = rows; break; }
-        }
-      }
-
-      // Último intento: capturar texto visible del menú para diagnóstico
+    // Si aún no hay datos: diagnóstico del menú visible
+    if (!saldosData || saldosData.length < 5) {
       const menuTexto = await page.evaluate(() =>
-        [...document.querySelectorAll('nav a, .sidebar a, .menu a, [class*="menu"] a, [class*="nav"] a, [class*="sidebar"] a')]
+        [...document.querySelectorAll('nav a, .sidebar a, .menu a, [class*="menu"] a, [class*="nav"] a, li a, .navbar a')]
           .map(a => a.innerText.trim()).filter(t => t.length > 1 && t.length < 40).slice(0, 30)
       );
-      if (menuTexto.length) {
-        diag.push(`*Menú SPA detectado:*\n\`${menuTexto.join(' | ').substring(0, 400)}\``);
-        console.log('📋 Menú SPA:', menuTexto.slice(0,15).join(' | '));
-      }
-      diag.push(`*XHR capturadas:*\n\`${xhrCapturadas.slice(0,15).join('\n').substring(0,400) || '(ninguna)'}\``);
+      if (menuTexto.length) diag.push(`*Menú visible:*\n\`${menuTexto.join(' | ').substring(0, 400)}\``);
     }
 
-    let saldos = [];
-    if (saldosData) {
-      saldos = Array.isArray(saldosData) ? saldosData : [];
-      console.log(`✅ Inventario: ${saldos.length} registros`);
-      if (saldos[0]) console.log('📋 Campos:', Object.keys(saldos[0]).join(', '));
-    }
+    let saldos = Array.isArray(saldosData) ? saldosData : [];
+    console.log(`📊 Inventario final: ${saldos.length} productos`);
+    if (saldos[0]) console.log('📋 Campos:', Object.keys(saldos[0]).join(', '));
 
-    // Si < 10 productos: tomar screenshot y enviar al admin para diagnóstico
     if (saldos.length < 10) {
-      try {
-        const screenshotBuf = await page.screenshot({ fullPage: false });
-        const screenshotPath = `/tmp/inv_diag_${Date.now()}.png`;
-        require('fs').writeFileSync(screenshotPath, screenshotBuf);
-        diag.push(`*XHR capturadas:*\n\`${xhrCapturadas.slice(0,15).join('\n').substring(0,400) || '(ninguna)'}\``);
-        const diagTxt = saldos.length === 0
-          ? `❌ *Inventario: 0 productos cargados*\n\n${diag.join('\n\n')}`
-          : `⚠️ *Inventario: solo ${saldos.length} productos*\n\n${diag.join('\n\n')}`;
-        _ultimoDiagInventario = diagTxt;
-        // Notificar admin con screenshot
-        if (_notificador) {
-          _notificador(diagTxt).catch(() => {});
-          // Enviar screenshot — bot.js debe exponer enviarFoto; usar callback extendido
-          if (typeof _notificadorFoto === 'function') {
-            _notificadorFoto(screenshotPath, `📸 VectorPOS — ${saldos.length} productos. URL: ${page.url().replace(APP_BASE,'')}`).catch(() => {});
-          }
-        }
-      } catch(screenshotErr) {
-        console.error('Screenshot error:', screenshotErr.message);
-        _ultimoDiagInventario = `⚠️ Solo ${saldos.length} productos cargados\n\n${diag.join('\n\n')}`;
-      }
+      const diagTxt = `⚠️ *Inventario: ${saldos.length} productos*\n` +
+        `XHR acumulado: ${_mejorXHR?.length || 0} items\n${diag.join('\n')}`;
+      _ultimoDiagInventario = diagTxt;
+      if (_notificador) _notificador(diagTxt).catch(() => {});
     } else {
       _ultimoDiagInventario = null;
     }
