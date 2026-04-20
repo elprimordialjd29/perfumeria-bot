@@ -15,6 +15,7 @@ const crypto      = require('crypto');
 const agente      = require('./agente');
 const reportes    = require('./reportes');
 const db          = require('./database');
+const monitor     = require('./monitor-pos');
 const fs          = require('fs');
 
 // ──────────────────────────────────────────────
@@ -155,13 +156,20 @@ bot.on('message', async (msg) => {
     '/replicas': 'réplicas',         '/restock': 'restock',
     '/faltantes': 'faltantes',       '/balance': 'balance',
     '/gastos': 'gastos',             '/redes': 'redes',
-    '/analisis': 'analisis',
+    '/analisis': 'analisis',         '/diagnostico': 'diagnostico',
   };
   const cmdBase = texto.split('@')[0].toLowerCase();
   if (SLASH_MAP[cmdBase]) texto = SLASH_MAP[cmdBase];
 
   const nombre = msg.from?.first_name || chatId;
   console.log(`📩 [${new Date().toLocaleTimeString('es-CO')}] ${nombre}: ${texto.substring(0, 80)}`);
+
+  // Diagnóstico rápido (admin only, sin pasar por agente)
+  if (texto === 'diagnostico' && esAdmin) {
+    const diag = monitor.generarMensajeDiagnostico();
+    await enviarMensaje(chatId, diag);
+    return;
+  }
 
   // Comandos que consultan VectorPOS (pueden tardar en cold-start de Railway)
   const COMANDOS_POS = [
@@ -373,6 +381,11 @@ async function iniciar() {
 }
 
 async function postIniciar() {
+  // Conectar notificador → monitor-pos puede enviar mensajes al admin
+  monitor.setNotificador(texto =>
+    bot.sendMessage(ADMIN_ID, texto, { parse_mode: 'Markdown' })
+  );
+
   // Reportes automáticos
   reportes.iniciar(bot);
 
@@ -397,8 +410,9 @@ async function postIniciar() {
       { command: 'restock',      description: 'Qué falta + costo de reposición' },
       { command: 'faltantes',    description: 'Faltantes por categoría' },
       { command: 'balance',      description: 'Balance crítico de inventario' },
-      { command: 'gastos',       description: 'Gastos del mes' },
-      { command: 'redes',        description: 'Checklist de redes sociales hoy' },
+      { command: 'gastos',        description: 'Gastos del mes' },
+      { command: 'redes',         description: 'Checklist de redes sociales hoy' },
+      { command: 'diagnostico',   description: 'Estado y diagnóstico del sistema' },
     ]);
     console.log('✅ Comandos / registrados');
   } catch(e) {

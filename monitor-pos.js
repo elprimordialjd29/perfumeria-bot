@@ -12,17 +12,28 @@ const db = require('./database');
 const BASE = 'https://pos.vectorpos.com.co';
 
 // ──────────────────────────────────────────────
+// NOTIFICADOR — bot.js inyecta esta función al iniciar
+// monitor-pos puede enviar mensajes al admin sin dep. circular
+// ──────────────────────────────────────────────
+let _notificador = null;
+function setNotificador(fn) { _notificador = fn; }
+function _notificar(msg) {
+  if (_notificador) _notificador(msg).catch(e => console.error('Notificador error:', e.message));
+}
+
+// ──────────────────────────────────────────────
 // SEMÁFORO — máximo 1 Chromium a la vez en Railway
 // Evita "Cannot fork" / "Resource temporarily unavailable"
 // ──────────────────────────────────────────────
 let _browserSlots = 0;
 const _MAX_BROWSERS = 1;
 const _browserQueue = [];
+let _browserAdquiridoEn = null;   // timestamp de la última adquisición
+let _ultimoError = null;          // último error registrado para diagnóstico
 
 function _acquireBrowser(timeoutMs = 90000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      // Quitar de la cola si sigue esperando
       const idx = _browserQueue.indexOf(tryAcquire);
       if (idx >= 0) _browserQueue.splice(idx, 1);
       reject(new Error('Timeout esperando browser disponible (90s)'));
@@ -32,6 +43,7 @@ function _acquireBrowser(timeoutMs = 90000) {
       if (_browserSlots < _MAX_BROWSERS) {
         clearTimeout(timer);
         _browserSlots++;
+        _browserAdquiridoEn = Date.now();
         resolve();
       } else {
         _browserQueue.push(tryAcquire);
@@ -42,12 +54,38 @@ function _acquireBrowser(timeoutMs = 90000) {
 }
 
 function _releaseBrowser() {
-  _browserSlots--;
+  _browserSlots = Math.max(0, _browserSlots - 1);
+  if (_browserSlots === 0) _browserAdquiridoEn = null;
   if (_browserQueue.length > 0) {
     const next = _browserQueue.shift();
     next();
   }
 }
+
+// ── WATCHDOG: detecta semáforo bloqueado y lo resetea automáticamente ──
+const WATCHDOG_TIMEOUT_MS = 240000; // 4 minutos sin liberar = bloqueado
+setInterval(() => {
+  if (_browserSlots > 0 && _browserAdquiridoEn) {
+    const bloqueadoMs = Date.now() - _browserAdquiridoEn;
+    if (bloqueadoMs > WATCHDOG_TIMEOUT_MS) {
+      const minutos = Math.round(bloqueadoMs / 60000);
+      console.warn(`⚠️  WATCHDOG: semáforo bloqueado ${minutos}min — reseteando automáticamente`);
+      _browserSlots = 0;
+      _browserAdquiridoEn = null;
+      // Desbloquear peticiones en cola
+      const pendientes = _browserQueue.length;
+      while (_browserQueue.length > 0) {
+        const next = _browserQueue.shift();
+        next();
+      }
+      _notificar(
+        `⚠️ *Auto-diagnóstico Chu:* Chromium estuvo bloqueado ${minutos} min.\n` +
+        `✅ Semáforo reseteado automáticamente.\n` +
+        (pendientes > 0 ? `🔄 ${pendientes} consulta(s) pendiente(s) reactivadas.` : '')
+      );
+    }
+  }
+}, 60000); // revisar cada minuto
 
 const PUPPETEER_ARGS = [
   '--no-sandbox', '--disable-setuid-sandbox',
@@ -161,13 +199,36 @@ async function crearBrowserLogueado(intentos = 0) {
     return { browser, page };
   } catch (e) {
     try { await browser.close(); } catch(_) {}
-    // Reintentar hasta 2 veces — el primer fallo de mañana es casi siempre
-    // un cold-start de Railway (Chromium aún levantando recursos)
-    if (intentos < 1 && !e.message.includes('Credenciales')) {
-      console.log(`🔄 VectorPOS login: reintentando en 4s...`);
+
+    // ── Clasificar el error para diagnóstico ──
+    const msg = e.message || '';
+    let tipo = 'desconocido';
+    if (msg.includes('Credenciales'))                tipo = 'credenciales';
+    else if (/net::|ERR_NAME_NOT_RESOLVED/i.test(msg)) tipo = 'red';
+    else if (/ERR_CONNECTION_REFUSED/i.test(msg))      tipo = 'servidor_caido';
+    else if (/timeout|Navigation|Protocol/i.test(msg)) tipo = 'timeout';
+    else if (/spawn|ENOMEM|Cannot fork/i.test(msg))    tipo = 'recursos';
+
+    _ultimoError = { tipo, mensaje: msg, fecha: new Date().toISOString(), intentos };
+    console.error(`❌ VectorPOS login [${tipo}] intento ${intentos}:`, msg);
+
+    // Reintentar 1 vez en cold-start / timeout (no en errores definitivos)
+    if (intentos < 1 && !['credenciales', 'red', 'servidor_caido'].includes(tipo)) {
+      console.log(`🔄 VectorPOS: reintentando en 4s...`);
       await new Promise(r => setTimeout(r, 4000));
       return crearBrowserLogueado(intentos + 1);
     }
+
+    // Notificar al admin si el error es persistente o definitivo
+    if (tipo === 'credenciales') {
+      _notificar('🔑 *Error VectorPOS:* Credenciales inválidas. Revisa VECTORPOS_USER y VECTORPOS_PASS en Railway.');
+    } else if (tipo === 'servidor_caido') {
+      _notificar('🔴 *VectorPOS no responde.* Puede estar caído. Verifica en https://pos.vectorpos.com.co');
+    } else if (tipo === 'recursos') {
+      _notificar('💾 *Error de recursos en Railway.* Chromium no pudo iniciar. El bot se auto-recuperará en el próximo intento.');
+    }
+    // timeout / desconocido: agente.js maneja los reintentos, no spamear
+
     throw e;
   }
 }
@@ -1839,6 +1900,56 @@ async function extraerFacturasConSesion(page, fecha, incluirDetalle = false) {
   }
 }
 
+// ──────────────────────────────────────────────
+// DIAGNÓSTICO DEL SISTEMA
+// ──────────────────────────────────────────────
+function obtenerEstadoSistema() {
+  const ahora = Date.now();
+  const bloqueadoMs = (_browserSlots > 0 && _browserAdquiridoEn)
+    ? ahora - _browserAdquiridoEn : 0;
+
+  return {
+    semaforo: {
+      slots_usados: _browserSlots,
+      max: _MAX_BROWSERS,
+      cola: _browserQueue.length,
+      bloqueado_ms: bloqueadoMs,
+      bloqueado_min: bloqueadoMs > 0 ? (bloqueadoMs / 60000).toFixed(1) : 0,
+    },
+    ultimo_error: _ultimoError,
+    uptime_min: Math.floor(process.uptime() / 60),
+  };
+}
+
+function generarMensajeDiagnostico() {
+  const s = obtenerEstadoSistema();
+  const semEmoji = s.semaforo.slots_usados > 0 ? '🔴' : '🟢';
+  const lines = [
+    `🔍 *Diagnóstico del sistema*`,
+    ``,
+    `*Chromium (Puppeteer):*`,
+    `${semEmoji} Slots: ${s.semaforo.slots_usados}/${s.semaforo.max}`,
+    s.semaforo.cola > 0 ? `⏳ Cola: ${s.semaforo.cola} pendiente(s)` : `✅ Cola: libre`,
+    s.semaforo.bloqueado_ms > 0
+      ? `⚠️ Bloqueado hace: ${s.semaforo.bloqueado_min} min`
+      : `✅ Sin bloqueos`,
+    ``,
+    `*Último error VectorPOS:*`,
+  ];
+
+  if (s.ultimo_error) {
+    const fecha = new Date(s.ultimo_error.fecha).toLocaleTimeString('es-CO');
+    lines.push(`❌ Tipo: ${s.ultimo_error.tipo}`);
+    lines.push(`⏰ Hora: ${fecha}`);
+    lines.push(`📝 ${s.ultimo_error.mensaje.substring(0, 120)}`);
+  } else {
+    lines.push(`✅ Sin errores registrados`);
+  }
+
+  lines.push(``, `*Sistema:*`, `⏱ Uptime: ${s.uptime_min} min`);
+  return lines.join('\n');
+}
+
 module.exports = {
   monitorearVentasDiarias,
   generarMensajeMeta,
@@ -1868,4 +1979,7 @@ module.exports = {
   calcularVelocidadInventario,
   reporteBalanceCritico,
   obtenerDiagInventario,
+  setNotificador,
+  obtenerEstadoSistema,
+  generarMensajeDiagnostico,
 };
