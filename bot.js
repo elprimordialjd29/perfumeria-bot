@@ -163,15 +163,30 @@ bot.on('message', async (msg) => {
   const nombre = msg.from?.first_name || chatId;
   console.log(`📩 [${new Date().toLocaleTimeString('es-CO')}] ${nombre}: ${texto.substring(0, 80)}`);
 
-  // Renovar "escribiendo..." cada 4s mientras se procesa (Telegram lo muestra 5s)
-  await bot.sendChatAction(chatId, 'typing');
+  // Comandos que consultan VectorPOS (pueden tardar en cold-start de Railway)
+  const COMANDOS_POS = [
+    'hoy', 'mes', 'mes anterior', 'semana', 'reporte general',
+    'cajeros', 'hora pico', 'caja', 'productos más vendidos', 'analisis',
+  ];
+  const esComandoPOS = COMANDOS_POS.includes(texto.toLowerCase());
+
+  // Para comandos POS: aviso inmediato + 3 min de timeout
+  // Para el resto: solo typing + 95s de timeout
+  if (esComandoPOS) {
+    await bot.sendMessage(chatId, '⏳ Consultando VectorPOS...');
+  } else {
+    await bot.sendChatAction(chatId, 'typing');
+  }
+
+  // Renovar "escribiendo..." cada 4s (Telegram lo muestra 5s)
   const typingInterval = setInterval(() => {
     bot.sendChatAction(chatId, 'typing').catch(() => {});
   }, 4000);
 
-  // Timeout global de 95s con mensaje amigable
+  // Timeout: 3 min para comandos POS (cold-start), 95s para el resto
+  const TIMEOUT_MS = esComandoPOS ? 180000 : 95000;
   const _timeoutPromise = new Promise((_, rej) =>
-    setTimeout(() => rej(new Error('__TIMEOUT_GLOBAL__')), 95000)
+    setTimeout(() => rej(new Error('__TIMEOUT_GLOBAL__')), TIMEOUT_MS)
   );
 
   try {
@@ -198,8 +213,8 @@ bot.on('message', async (msg) => {
   } catch (error) {
     clearInterval(typingInterval);
     if (error.message === '__TIMEOUT_GLOBAL__') {
-      console.error('⏱️  Timeout global 95s para:', texto.substring(0, 50));
-      await bot.sendMessage(chatId, '⏳ La consulta tardó demasiado. Intenta de nuevo en unos segundos.');
+      console.error(`⏱️  Timeout ${TIMEOUT_MS/1000}s para:`, texto.substring(0, 50));
+      await bot.sendMessage(chatId, '❌ VectorPOS no respondió. Intenta de nuevo en unos segundos.');
     } else {
       console.error('❌ Error mensaje:', error.message);
       await bot.sendMessage(chatId, '😅 Tuve un problema. Intenta de nuevo en un momento.');

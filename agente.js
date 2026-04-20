@@ -609,12 +609,16 @@ async function ejecutarAccion(rawOriginal) {
     if (raw.startsWith('[REPORTE_MES]')) {
       let datos = await monitor.monitorearVentasDiarias();
       if (!datos) {
-        // Segundo intento tras 6s (cold-start de Railway)
-        console.log('🔄 [REPORTE_MES] Segundo intento VectorPOS...');
-        await new Promise(r => setTimeout(r, 6000));
+        console.log('🔄 [REPORTE_MES] intento 2/3...');
+        await new Promise(r => setTimeout(r, 8000));
         datos = await monitor.monitorearVentasDiarias();
       }
-      if (!datos) return '❌ No pude conectar a VectorPOS. Intenta en unos segundos.';
+      if (!datos) {
+        console.log('🔄 [REPORTE_MES] intento 3/3...');
+        await new Promise(r => setTimeout(r, 10000));
+        datos = await monitor.monitorearVentasDiarias();
+      }
+      if (!datos) return '❌ VectorPOS no respondió. Intenta en unos segundos.';
       return monitor.generarMensajeMeta(datos);
     }
 

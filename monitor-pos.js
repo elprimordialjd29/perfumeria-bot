@@ -163,10 +163,9 @@ async function crearBrowserLogueado(intentos = 0) {
     try { await browser.close(); } catch(_) {}
     // Reintentar hasta 2 veces — el primer fallo de mañana es casi siempre
     // un cold-start de Railway (Chromium aún levantando recursos)
-    if (intentos < 2 && !e.message.includes('Credenciales')) {
-      const delay = (intentos + 1) * 3000; // 3s, 6s
-      console.log(`🔄 VectorPOS: reintentando en ${delay/1000}s (intento ${intentos + 1}/2)...`);
-      await new Promise(r => setTimeout(r, delay));
+    if (intentos < 1 && !e.message.includes('Credenciales')) {
+      console.log(`🔄 VectorPOS login: reintentando en 4s...`);
+      await new Promise(r => setTimeout(r, 4000));
       return crearBrowserLogueado(intentos + 1);
     }
     throw e;
