@@ -660,6 +660,9 @@ function formatPesos(val) {
 // Último diagnóstico de inventario — se llena cuando retorna 0 productos
 let _ultimoDiagInventario = null;
 
+// Catálogo capturado en la misma sesión que los saldos (evita abrir 2º browser)
+let _ultimoCatalogoCapturado = null;
+
 /** Retorna el último diagnóstico de inventario (para enviarlo al admin por Telegram) */
 function obtenerDiagInventario() { return _ultimoDiagInventario; }
 
@@ -704,7 +707,8 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
     // ── Interceptor XHR — activo solo después de click en "Cargar Lista" ──
     let saldosData = null;
     let _capturarXHR = false;
-    let _mejorXHR = null; // guarda el array más grande visto
+    let _mejorXHR    = null;  // guarda el array de saldos más grande
+    let _catalogoXHR = null;  // guarda el array de productos con Categoria
     const xhrCapturadas = [];
     page.on('response', async res => {
       if (!_capturarXHR) return;
@@ -736,6 +740,13 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
             _mejorXHR = arr;
           } else if (!_mejorXHR && hasNombre) {
             _mejorXHR = arr; // cualquier cosa con nombre como fallback
+          }
+          // Detectar catálogo: cualquier XHR que tenga campo Categoria
+          const hasCategoria = !!(first?.Categoria || first?.categoria ||
+                                  first?.CATEGORIA || first?.Categoría);
+          if (hasCategoria && arr.length > (_catalogoXHR?.length || 0)) {
+            console.log(`  📦 Catálogo XHR: ${arr.length} items con Categoria`);
+            _catalogoXHR = arr;
           }
           // NO asignar saldosData aquí — esperar a que lleguen todos los XHR
           // y tomar el más grande al final de la espera
@@ -906,16 +917,53 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
     console.log(`📊 Tabla DOM: ${rowsDom.length} filas`);
 
     if (rowsDom.length > 5) {
-      // DOM es confiable si la tabla se llenó
       saldosData = rowsDom;
       console.log(`✅ Usando tabla DOM: ${rowsDom.length} productos`);
     } else if (_mejorXHR?.length > 5) {
-      // XHR como respaldo si DOM está vacío
       saldosData = _mejorXHR;
       console.log(`✅ Usando XHR: ${_mejorXHR.length} productos`);
     } else if (rowsDom.length > 0) {
-      saldosData = rowsDom; // aunque sean pocos, tomar los que hay
+      saldosData = rowsDom;
     }
+
+    // ── 8. Navegar a "Productos" en la misma sesión para obtener categorías ──
+    if (saldosData && saldosData.length > 5 && !_catalogoXHR) {
+      try {
+        console.log('📦 Buscando catálogo → navegando a Productos...');
+        // Click en "Productos" del submenú de Inventario
+        const clickedProd = await page.evaluate((findClick) => {
+          return eval(findClick)(['Productos', 'productos', 'Lista Productos', 'Artículos', 'Articulos']);
+        }, _JS_FIND_AND_CLICK);
+        console.log(`📌 Click Productos: ${clickedProd || 'no encontrado'}`);
+
+        if (clickedProd) {
+          await new Promise(r => setTimeout(r, 1500));
+
+          // Click Cargar Lista — mismas prioridades que saldos
+          const cargarProd = await page.evaluate(() => {
+            const byId = document.querySelector(
+              '#btnCargar, #btnBuscar, [id*="Cargar"], [id*="cargar"]'
+            );
+            if (byId) { byId.dispatchEvent(new MouseEvent('click',{bubbles:true})); byId.click(); return `id:${byId.id}`; }
+            const btn = [...document.querySelectorAll('button,[role="button"],a.btn')]
+              .find(b => (b.innerText||b.value||'').replace(/\s+/g,' ').trim().toLowerCase().includes('carg'));
+            if (btn) { btn.dispatchEvent(new MouseEvent('click',{bubbles:true})); btn.click(); return `text:"${(btn.innerText||'').trim().substring(0,20)}"`; }
+            return null;
+          });
+          console.log(`📌 Click CargarProductos: ${cargarProd || 'no encontrado'}`);
+
+          // Esperar XHR con Categoria (hasta 12s)
+          await new Promise(r => setTimeout(r, 12000));
+          console.log(`📦 Catálogo capturado: ${_catalogoXHR?.length || 0} productos con Categoria`);
+          if (_catalogoXHR?.[0]) console.log('📋 Campos catálogo:', Object.keys(_catalogoXHR[0]).join(', '));
+        }
+      } catch(e) {
+        console.log('⚠️ Catálogo Productos fallido (no crítico):', e.message);
+      }
+    }
+
+    // Guardar catálogo en variable de módulo para consultarTodoInventario
+    _ultimoCatalogoCapturado = _catalogoXHR || null;
 
     // Screenshot del estado actual (para diagnóstico si hay pocos productos)
     try {
@@ -1115,11 +1163,15 @@ async function consultarTodoInventario() {
   console.log('\n📦 Consultando inventario completo...');
 
   // Ejecutar SECUENCIALMENTE para no bloquear el semáforo del browser
-  // (paralelo causaba que catalogo esperara 70s+ en cola y el total superaba 3 min)
-  const saldos  = await _obtenerSaldosBrutos();
+  // _obtenerSaldosBrutos navega también a "Productos" y deja el catálogo en
+  // _ultimoCatalogoCapturado, evitando abrir un 2º browser para el catálogo.
+  _ultimoCatalogoCapturado = null; // limpiar antes de la llamada
+  const saldos = await _obtenerSaldosBrutos();
   if (!saldos) return null;
 
-  const catalogo = await _obtenerCatalogoProductos();
+  // Usar catálogo capturado en la misma sesión; solo abrir 2º browser si falló
+  const catalogo = _ultimoCatalogoCapturado || await _obtenerCatalogoProductos();
+  _ultimoCatalogoCapturado = null; // resetear tras uso
 
   // Filtrar productos de servicio (no son inventario físico)
   const esServicio = n => {
