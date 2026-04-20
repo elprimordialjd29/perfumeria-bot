@@ -755,6 +755,12 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
           if (hasCategoria && arr.length > (_catalogoXHR?.length || 0)) {
             console.log(`  📦 Catálogo XHR: ${arr.length} items con Categoria`);
             _catalogoXHR = arr;
+            // Log campos únicos de Area para entender M/F/U
+            const areas = [...new Set(arr.map(p => p.Area || ''))].filter(Boolean).slice(0, 15);
+            if (areas.length) console.log(`  📋 Áreas únicas catálogo: ${areas.join(' | ')}`);
+            // Log muestra de esencias con su Area
+            const muestraEs = arr.filter(p => (p.Categoria||'').startsWith('ESENCIAS')).slice(0, 5);
+            muestraEs.forEach(p => console.log(`  🧪 "${p.Nombre}" Cat:"${p.Categoria}" Area:"${p.Area||''}" Med:"${p.Medida||''}"`));
           }
           // NO asignar saldosData aquí — esperar a que lleguen todos los XHR
           // y tomar el más grande al final de la espera
@@ -1122,6 +1128,22 @@ async function _obtenerCatalogoProductos() {
  * - Si medida es u/und/unidad → ORIGINALES (botella entera, no fraccionada)
  * - Palabras clave específicas tienen prioridad sobre la medida
  */
+/**
+ * Normaliza categorías específicas de VectorPOS que no coinciden
+ * con nuestras categorías internas. Llamar DESPUÉS de obtener la
+ * categoría del catálogo.
+ */
+function _normalizarCategoriaVectorPOS(cat) {
+  const c = (cat || '').toUpperCase().trim();
+  // Esencias adicionales → ESENCIAS (fragrancias medidas en gramos)
+  if (c === 'ADICIONAL' || c === 'ADICIONALES') return 'ESENCIAS';
+  // Splash → ORIGINALES (producto terminado, unidades)
+  if (c === 'SPLASH') return 'ORIGINALES';
+  // Aerosoles → ORIGINALES (perfumes terminados en aerosol)
+  if (c === 'PERFUMES EN AEROSOL' || c === 'AEROSOL') return 'ORIGINALES';
+  return cat; // sin cambios para ESENCIAS M/F/U, ENVASE, REPLICA 1.1, etc.
+}
+
 function _inferirCategoria(nombre, medida = '') {
   const n = nombre.toLowerCase();
   const m = medida.toLowerCase().trim();
@@ -1192,10 +1214,16 @@ async function consultarTodoInventario() {
   console.log(`✅ ${saldosFiltrados.length} saldos (de ${saldos.length}, filtrados ${saldos.length - saldosFiltrados.length} servicios) | catálogo: ${catalogo?.length || 0} productos`);
 
   // Construir mapa de catálogo por nombre normalizado
+  // NOTA: Los nombres del catálogo pueden traer HTML embebido (e.g. "<span class='d-none'>")
+  // → strip HTML antes de usar como clave para que el lookup funcione correctamente
+  const _stripHtml = s => s.replace(/<[^>]*>/g, '').trim();
+
   const mapacat = {};
   if (catalogo) {
     catalogo.forEach(p => {
-      const nombre = (p.Nombre || p.nombre || p.NOMBRE || '').trim();
+      const nombreRaw = (p.Nombre || p.nombre || p.NOMBRE || '').trim();
+      if (!nombreRaw) return;
+      const nombre = _stripHtml(nombreRaw);
       if (!nombre) return;
       const key = nombre.toLowerCase();
       mapacat[key] = {
@@ -1221,7 +1249,7 @@ async function consultarTodoInventario() {
       nombre,
       saldo,
       medida:      cat.medida    || p.Medida || '',
-      categoria:   cat.categoria || _inferirCategoria(nombre, cat.medida || p.Medida || ''),
+      categoria:   _normalizarCategoriaVectorPOS(cat.categoria || _inferirCategoria(nombre, cat.medida || p.Medida || '')),
       codigo:      p.Codigo || '',
       costoUnidad,
       costoTotal:  costoUnidad > 0 ? costoUnidad * saldo :
@@ -1424,12 +1452,15 @@ function generarMensajeAlertasCompleto(todoInventario) {
   const getU = (p) => (p.medida || '').toLowerCase().match(/^(gr|g|ml)/) ? `${p.saldo}g` : `${p.saldo} u`;
 
   const SECCIONES = [
-    { key: 'ESENCIAS',       emoji: '🧪', label: 'ESENCIAS',        todoOK: false },
-    { key: 'ENVASE',         emoji: '🧴', label: 'ENVASES',         todoOK: true  },
-    { key: 'ORIGINALES',     emoji: '✨', label: 'ORIGINALES',      todoOK: true  },
-    { key: 'REPLICA 1.1',    emoji: '🔁', label: 'RÉPLICAS 1.1',   todoOK: true  },
-    { key: 'CREMA CORPORAL', emoji: '🧴', label: 'CREMAS',          todoOK: true  },
-    { key: 'INSUMOS VARIOS', emoji: '🔧', label: 'INSUMOS VARIOS',  todoOK: false },
+    { key: 'ESENCIAS M',     emoji: '🧪', label: 'ESENCIAS M — masculinas', todoOK: false, exacto: true  },
+    { key: 'ESENCIAS F',     emoji: '🌸', label: 'ESENCIAS F — femeninas',  todoOK: false, exacto: true  },
+    { key: 'ESENCIAS U',     emoji: '🌿', label: 'ESENCIAS U — unisex',     todoOK: false, exacto: true  },
+    { key: 'ESENCIAS',       emoji: '🧪', label: 'ESENCIAS',                todoOK: false, exacto: false },
+    { key: 'ENVASE',         emoji: '🧴', label: 'ENVASES',                 todoOK: true,  exacto: false },
+    { key: 'ORIGINALES',     emoji: '✨', label: 'ORIGINALES',              todoOK: true,  exacto: false },
+    { key: 'REPLICA 1.1',    emoji: '🔁', label: 'RÉPLICAS 1.1',           todoOK: true,  exacto: false },
+    { key: 'CREMA CORPORAL', emoji: '🧴', label: 'CREMAS',                  todoOK: true,  exacto: false },
+    { key: 'INSUMOS VARIOS', emoji: '🔧', label: 'INSUMOS VARIOS',          todoOK: false, exacto: false },
   ];
 
   let msg = `📦 *INVENTARIO — ${todoInventario.length} productos*\n`;
@@ -1438,6 +1469,7 @@ function generarMensajeAlertasCompleto(todoInventario) {
   for (const sec of SECCIONES) {
     const prods = todoInventario.filter(p => {
       const c = (p.categoria || '').toUpperCase();
+      if (sec.exacto) return c === sec.key;
       if (sec.key === 'ESENCIAS') return c.startsWith('ESENCIAS') && !/^ESENCIAS [MFU]$/.test(c);
       return c.includes(sec.key);
     });
