@@ -69,8 +69,13 @@ async function autoReparar(motivo = '') {
 // NOTIFICADOR — bot.js inyecta esta función al iniciar
 // monitor-pos puede enviar mensajes al admin sin dep. circular
 // ──────────────────────────────────────────────
-let _notificador = null;
-function setNotificador(fn) { _notificador = fn; }
+let _notificador     = null;
+let _notificadorFoto = null;
+
+function setNotificador(fnTexto, fnFoto) {
+  _notificador     = fnTexto;
+  _notificadorFoto = fnFoto || null;
+}
 function _notificar(msg) {
   if (_notificador) _notificador(msg).catch(e => console.error('Notificador error:', e.message));
 }
@@ -756,24 +761,41 @@ async function _obtenerSaldosBrutosImpl() {
         }, _JS_FIND_AND_CLICK);
 
         if (clickedCargar) {
-          console.log(`  ↳ Click en "${clickedCargar}", esperando datos...`);
-          await new Promise(r => setTimeout(r, 6000));
+          console.log(`  ↳ Click en "${clickedCargar}", esperando datos (hasta 12s)...`);
+          // Esperar hasta que la tabla tenga >5 filas O pase el tiempo máximo
+          let esperado = 0;
+          while (esperado < 12000 && !saldosData) {
+            await new Promise(r => setTimeout(r, 1500));
+            esperado += 1500;
+            if (saldosData) break;
+            if (_mejorXHR?.length > 5) { saldosData = _mejorXHR; break; }
+            const rowCount = await page.evaluate(() =>
+              document.querySelectorAll('table tbody tr, table tr[data-id], table tr:not(:first-child)').length
+            );
+            if (rowCount > 5) {
+              console.log(`  ↳ Tabla DOM tiene ${rowCount} filas después de ${esperado}ms`);
+              const rows = await _leerTablaInventario(page);
+              if (rows.length > 5) { saldosData = rows; break; }
+            }
+          }
         } else {
-          await new Promise(r => setTimeout(r, 3000));
+          // Sin botón: esperar y probar DOM igual
+          await new Promise(r => setTimeout(r, 4000));
+          if (_mejorXHR?.length > 5) saldosData = _mejorXHR;
         }
 
         if (saldosData) break;
 
-        // Usar el mejor XHR capturado si hay
+        // XHR de cualquier tamaño razonable (>2) como último recurso
         if (_mejorXHR?.length > 2) {
           console.log(`  ↳ Usando mejor XHR: ${_mejorXHR.length} items`);
           saldosData = _mejorXHR;
           break;
         }
 
-        // Fallback: leer tabla DOM con scroll
+        // DOM final
         const rows = await _leerTablaInventario(page);
-        if (rows.length > 2) {
+        if (rows.length > 5) {
           console.log(`✅ Tabla DOM en ${hash}: ${rows.length} filas`);
           saldosData = rows;
           break;
@@ -784,8 +806,9 @@ async function _obtenerSaldosBrutosImpl() {
           title: document.title,
           h1: document.querySelector('h1,h2,.page-title,.titulo')?.innerText?.substring(0,50) || '',
           rows: document.querySelectorAll('table tr').length,
+          tablasIds: [...document.querySelectorAll('table')].map(t => t.id || t.className).slice(0,5).join(','),
         }));
-        const linea = `${hash} → title="${info.title}" h1="${info.h1}" rows=${info.rows}`;
+        const linea = `${hash} → title="${info.title}" h1="${info.h1}" rows=${info.rows} tablas="${info.tablasIds}"`;
         diag.push(linea);
         console.log('  ↳', linea);
 
@@ -865,16 +888,33 @@ async function _obtenerSaldosBrutosImpl() {
       saldos = Array.isArray(saldosData) ? saldosData : [];
       console.log(`✅ Inventario: ${saldos.length} registros`);
       if (saldos[0]) console.log('📋 Campos:', Object.keys(saldos[0]).join(', '));
-      // Mostrar diagnóstico también cuando hay muy pocos productos (< 10)
-      if (saldos.length < 10) {
-        diag.push(`*XHR capturadas (${xhrCapturadas.length}):*\n\`${xhrCapturadas.slice(0,10).join('\n').substring(0,300) || '(ninguna)'}\``);
+    }
+
+    // Si < 10 productos: tomar screenshot y enviar al admin para diagnóstico
+    if (saldos.length < 10) {
+      try {
+        const screenshotBuf = await page.screenshot({ fullPage: false });
+        const screenshotPath = `/tmp/inv_diag_${Date.now()}.png`;
+        require('fs').writeFileSync(screenshotPath, screenshotBuf);
+        diag.push(`*XHR capturadas:*\n\`${xhrCapturadas.slice(0,15).join('\n').substring(0,400) || '(ninguna)'}\``);
+        const diagTxt = saldos.length === 0
+          ? `❌ *Inventario: 0 productos cargados*\n\n${diag.join('\n\n')}`
+          : `⚠️ *Inventario: solo ${saldos.length} productos*\n\n${diag.join('\n\n')}`;
+        _ultimoDiagInventario = diagTxt;
+        // Notificar admin con screenshot
+        if (_notificador) {
+          _notificador(diagTxt).catch(() => {});
+          // Enviar screenshot — bot.js debe exponer enviarFoto; usar callback extendido
+          if (typeof _notificadorFoto === 'function') {
+            _notificadorFoto(screenshotPath, `📸 VectorPOS — ${saldos.length} productos. URL: ${page.url().replace(APP_BASE,'')}`).catch(() => {});
+          }
+        }
+      } catch(screenshotErr) {
+        console.error('Screenshot error:', screenshotErr.message);
         _ultimoDiagInventario = `⚠️ Solo ${saldos.length} productos cargados\n\n${diag.join('\n\n')}`;
-      } else {
-        _ultimoDiagInventario = null;
       }
     } else {
-      console.log('❌ Inventario: 0 registros tras todos los intentos');
-      _ultimoDiagInventario = `🔍 *DIAGNÓSTICO INVENTARIO (SPA)*\n\n${diag.join('\n\n')}`;
+      _ultimoDiagInventario = null;
     }
 
     await browser.close();

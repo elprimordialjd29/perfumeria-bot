@@ -396,9 +396,11 @@ async function iniciar() {
 }
 
 async function postIniciar() {
-  // Conectar notificador → monitor-pos puede enviar mensajes al admin
-  monitor.setNotificador(texto =>
-    bot.sendMessage(ADMIN_ID, texto, { parse_mode: 'Markdown' })
+  // Conectar notificador → monitor-pos puede enviar mensajes Y fotos al admin
+  monitor.setNotificador(
+    texto => bot.sendMessage(ADMIN_ID, texto, { parse_mode: 'Markdown' }),
+    (rutaFoto, caption) => bot.sendPhoto(ADMIN_ID, rutaFoto, { caption })
+      .then(() => { try { fs.unlinkSync(rutaFoto); } catch(_) {} })
   );
 
   // Reportes automáticos
