@@ -723,14 +723,16 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
                           first?.SaldoActual !== undefined || first?.stock !== undefined;
         if (hasNombre) {
           console.log(`📡 XHR candidato: ${url.replace(APP_BASE,'')} (${arr.length} items, saldo=${hasSaldo})`);
-          // Guardar el más grande o el primero con saldo real
-          if (!_mejorXHR || (hasSaldo && arr.length > (_mejorXHR?.length || 0))) {
+          // SIEMPRE guardar el más grande — el primer XHR suele ser un widget
+          // de "stock crítico" (2 items). La lista completa llega después.
+          if (hasSaldo && arr.length > (_mejorXHR?.length || 0)) {
+            console.log(`  ↳ Nuevo mejor XHR: ${arr.length} items (anterior: ${_mejorXHR?.length || 0})`);
             _mejorXHR = arr;
+          } else if (!_mejorXHR && hasNombre) {
+            _mejorXHR = arr; // cualquier cosa con nombre como fallback
           }
-          if (hasSaldo && !saldosData) {
-            console.log(`✅ Inventario XHR OK: ${url.replace(APP_BASE,'')} (${arr.length} items)`);
-            saldosData = arr;
-          }
+          // NO asignar saldosData aquí — esperar a que lleguen todos los XHR
+          // y tomar el más grande al final de la espera
         }
       } catch(e) {}
     });
@@ -738,8 +740,19 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
     // ── Login en app.vectorpos.com.co ──
     console.log('📌 Login en app.vectorpos.com.co...');
     await _loginApp(page, process.env.VECTORPOS_USER, process.env.VECTORPOS_PASS);
-    console.log(`📌 URL post-login: ${page.url()}`);
+    const urlPostLogin = page.url();
+    console.log(`📌 URL post-login: ${urlPostLogin}`);
     await new Promise(r => setTimeout(r, 3000));
+
+    // Screenshot post-login para diagnóstico (se envía solo la primera vez o si hay error)
+    try {
+      const buf1 = await page.screenshot({ fullPage: false });
+      const p1   = `/tmp/inv_login_${Date.now()}.png`;
+      require('fs').writeFileSync(p1, buf1);
+      if (typeof _notificadorFoto === 'function') {
+        _notificadorFoto(p1, `🔐 Post-login VectorPOS: ${urlPostLogin.replace(APP_BASE,'')}`).catch(() => {});
+      }
+    } catch(_) {}
 
     // ── Intentar rutas hash directas de la SPA ──
     const hashRutas = [
@@ -780,40 +793,21 @@ async function _obtenerSaldosBrutosImpl(onBrowserReady) {
           ]);
         }, _JS_FIND_AND_CLICK);
 
-        if (clickedCargar) {
-          console.log(`  ↳ Click en "${clickedCargar}", esperando datos (hasta 12s)...`);
-          // Esperar hasta que la tabla tenga >5 filas O pase el tiempo máximo
-          let esperado = 0;
-          while (esperado < 12000 && !saldosData) {
-            await new Promise(r => setTimeout(r, 1500));
-            esperado += 1500;
-            if (saldosData) break;
-            if (_mejorXHR?.length > 5) { saldosData = _mejorXHR; break; }
-            const rowCount = await page.evaluate(() =>
-              document.querySelectorAll('table tbody tr, table tr[data-id], table tr:not(:first-child)').length
-            );
-            if (rowCount > 5) {
-              console.log(`  ↳ Tabla DOM tiene ${rowCount} filas después de ${esperado}ms`);
-              const rows = await _leerTablaInventario(page);
-              if (rows.length > 5) { saldosData = rows; break; }
-            }
-          }
-        } else {
-          // Sin botón: esperar y probar DOM igual
-          await new Promise(r => setTimeout(r, 4000));
-          if (_mejorXHR?.length > 5) saldosData = _mejorXHR;
-        }
+        const ESPERA_MS = clickedCargar ? 10000 : 5000;
+        if (clickedCargar) console.log(`  ↳ Click en "${clickedCargar}", esperando ${ESPERA_MS/1000}s para acumular XHR...`);
+        // Esperar TODO el tiempo aunque lleguen XHR — queremos el más grande
+        await new Promise(r => setTimeout(r, ESPERA_MS));
 
-        if (saldosData) break;
-
-        // XHR de cualquier tamaño razonable (>2) como último recurso
-        if (_mejorXHR?.length > 2) {
-          console.log(`  ↳ Usando mejor XHR: ${_mejorXHR.length} items`);
-          saldosData = _mejorXHR;
+        // Tomar el mejor XHR acumulado (el más grande = lista completa)
+        const mejorActual = _mejorXHR;
+        console.log(`  ↳ XHR acumuladas: mejor tiene ${mejorActual?.length || 0} items`);
+        if (mejorActual?.length > 5) {
+          console.log(`✅ Usando mejor XHR: ${mejorActual.length} items`);
+          saldosData = mejorActual;
           break;
         }
 
-        // DOM final
+        // Fallback DOM
         const rows = await _leerTablaInventario(page);
         if (rows.length > 5) {
           console.log(`✅ Tabla DOM en ${hash}: ${rows.length} filas`);
