@@ -1452,15 +1452,15 @@ function generarMensajeAlertasCompleto(todoInventario) {
   const getU = (p) => (p.medida || '').toLowerCase().match(/^(gr|g|ml)/) ? `${p.saldo}g` : `${p.saldo} u`;
 
   const SECCIONES = [
-    { key: 'ESENCIAS M',     emoji: '🧪', label: 'ESENCIAS M — masculinas', todoOK: false, exacto: true  },
-    { key: 'ESENCIAS F',     emoji: '🌸', label: 'ESENCIAS F — femeninas',  todoOK: false, exacto: true  },
-    { key: 'ESENCIAS U',     emoji: '🌿', label: 'ESENCIAS U — unisex',     todoOK: false, exacto: true  },
-    { key: 'ESENCIAS',       emoji: '🧪', label: 'ESENCIAS',                todoOK: false, exacto: false },
-    { key: 'ENVASE',         emoji: '🧴', label: 'ENVASES',                 todoOK: true,  exacto: false },
-    { key: 'ORIGINALES',     emoji: '✨', label: 'ORIGINALES',              todoOK: true,  exacto: false },
-    { key: 'REPLICA 1.1',    emoji: '🔁', label: 'RÉPLICAS 1.1',           todoOK: true,  exacto: false },
-    { key: 'CREMA CORPORAL', emoji: '🧴', label: 'CREMAS',                  todoOK: true,  exacto: false },
-    { key: 'INSUMOS VARIOS', emoji: '🔧', label: 'INSUMOS VARIOS',          todoOK: false, exacto: false },
+    { key: 'ESENCIAS M',     emoji: '🧪', label: 'ESENCIAS M — masculinas', todoOK: true, exacto: true  },
+    { key: 'ESENCIAS F',     emoji: '🌸', label: 'ESENCIAS F — femeninas',  todoOK: true, exacto: true  },
+    { key: 'ESENCIAS U',     emoji: '🌿', label: 'ESENCIAS U — unisex',     todoOK: true, exacto: true  },
+    { key: 'ESENCIAS',       emoji: '🧪', label: 'ESENCIAS',                todoOK: true, exacto: false },
+    { key: 'ENVASE',         emoji: '🧴', label: 'ENVASES',                 todoOK: true, exacto: false },
+    { key: 'ORIGINALES',     emoji: '✨', label: 'ORIGINALES',              todoOK: true, exacto: false },
+    { key: 'REPLICA 1.1',    emoji: '🔁', label: 'RÉPLICAS 1.1',           todoOK: true, exacto: false },
+    { key: 'CREMA CORPORAL', emoji: '🧴', label: 'CREMAS',                  todoOK: true, exacto: false },
+    { key: 'INSUMOS VARIOS', emoji: '🔧', label: 'INSUMOS VARIOS',          todoOK: true, exacto: false },
   ];
 
   let msg = `📦 *INVENTARIO — ${todoInventario.length} productos*\n`;
