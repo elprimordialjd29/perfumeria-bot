@@ -270,6 +270,9 @@ const MENU_ACCIONES = {
   // ── INVENTARIO ──
   '16': '[INVENTARIO]',
   '17': '[INVENTARIO_CAT:ESENCIAS]',
+  '28': '[INVENTARIO_CAT:ESENCIAS M]',
+  '29': '[INVENTARIO_CAT:ESENCIAS F]',
+  '30': '[INVENTARIO_CAT:ESENCIAS U]',
   '18': '[INVENTARIO_CAT:ENVASE]',
   '19': '[INVENTARIO_CAT:ORIGINALES]',
   '20': '[INVENTARIO_CAT:REPLICA 1.1]',
@@ -3058,27 +3061,46 @@ function mensajeBienvenida() {
 
 function mensajeMenu() {
   return (
-    `📋 *SALMA PERFUM*\n\n` +
-    `💰 *VENTAS*\n` +
+    `🌸 *SALMA PERFUM*\n\n` +
+
+    `📈 *VENTAS*\n` +
     `1·Hoy  2·Mes  3·Mes ant  4·Semana  5·Rango  6·General\n\n` +
-    `👥 *CAJEROS*\n` +
-    `7·Quién trabajó  8·Ranking mes  9·Hora pico  10·Medios pago\n\n` +
-    `🏧 *CAJA*\n` +
+
+    `🧑‍💼 *CAJEROS*\n` +
+    `7·Quién trabajó  8·Ranking  9·Hora pico  10·Medios de pago\n\n` +
+
+    `🧾 *CAJA*\n` +
     `11·Hoy  12·Semana  13·Mes\n\n` +
-    `📦 *PRODUCTOS*\n` +
-    `14·Top vendidos mes  15·Ventas vs inventario\n\n` +
-    `🧪 *INVENTARIO*\n` +
-    `16·Todo  17·Esencias  18·Envases  19·Originales  20·Réplicas  21·Restock\n\n` +
-    `🔍 *ANÁLISIS*\n` +
-    `25·Faltantes por categoría  26·Balance crítico  27·🧠 Análisis libre\n\n` +
+
+    `🛒 *PRODUCTOS*\n` +
+    `14·Top vendidos  15·Ventas vs inventario\n\n` +
+
+    `📦 *INVENTARIO GENERAL*\n` +
+    `16·Completo  21·🚨 Restock urgente\n\n` +
+
+    `⚗️ *ESENCIAS*\n` +
+    `17·Todas  28·👔 Masculinas  29·🌺 Femeninas  30·🌿 Unisex\n\n` +
+
+    `🫙 *ENVASES*\n` +
+    `18·Stock de envases\n\n` +
+
+    `✨ *ORIGINALES & RÉPLICAS*\n` +
+    `19·Originales  20·Réplicas 1.1\n\n` +
+
+    `📊 *ANÁLISIS*\n` +
+    `25·Faltantes  26·Balance crítico  27·🧠 Análisis libre\n\n` +
+
     `💸 *GASTOS*\n` +
     `22·Gastos del mes\n\n` +
-    `📱 *REDES*\n` +
+
+    `📸 *REDES SOCIALES*\n` +
     `23·Checklist hoy  24·Plan semana\n\n` +
+
     `⚙️ *ADMIN*  R·Requerimiento  V·Ver reqs  E·Excel\n\n` +
-    `🔧 *SISTEMA*\n` +
-    `/diagnostico · /reconectar\n\n` +
-    `_hoy · ayer · semana · mes · caja · cajeros · inventario · restock · faltantes · balance · analisis_`
+
+    `🔧 *SISTEMA*  /diagnostico · /reconectar\n\n` +
+
+    `_hoy · ayer · semana · mes · esencias · envases · originales · restock · faltantes · balance_`
   );
 }
 
