@@ -3061,7 +3061,7 @@ function mensajeBienvenida() {
 
 function mensajeMenu() {
   return (
-    `🌸 *SALMA PERFUM*\n\n` +
+    `✨ *SALMA PERFUM*\n\n` +
 
     `📈 *VENTAS*\n` +
     `1·Hoy  2·Mes  3·Mes ant  4·Semana  5·Rango  6·General\n\n` +
