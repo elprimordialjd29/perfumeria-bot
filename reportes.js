@@ -223,40 +223,18 @@ async function enviarReporteMatutino() {
 
     await notificar('🌅 Reporte Matutino', msg1);
 
-    // ── 3. Inventario bajo — todos, dividido en partes ──
+    // ── 3. Inventario completo — organizado por M/F/U ──
     try {
-      const alertas = await monitor.consultarAlertasInventario();
-      const bajos = [
-        ...(alertas?.alertasGramos   || []),
-        ...(alertas?.alertasUnidades || []),
-      ].sort((a, b) => {
-        if (a.saldo === 0 && b.saldo > 0) return -1;
-        if (b.saldo === 0 && a.saldo > 0) return 1;
-        return a.saldo - b.saldo;
-      }); // agotados primero, luego críticos, luego bajos
+      const todoInv = await monitor.consultarTodoInventario();
+      const resultado = monitor.generarMensajeAlertasCompleto(todoInv);
 
-      if (bajos.length === 0) {
-        await notificar('✅ Inventario', `✅ *Inventario: sin alertas*\n_Todos los productos tienen stock suficiente_`);
-        return;
-      }
-
-      // Dividir en partes de ~3000 chars
-      const encInv = `⚠️ *INVENTARIO BAJO (${bajos.length} productos)*\n\n`;
-      const partes = [];
-      let parteActual = encInv;
-      for (const p of bajos) {
-        const nivel = monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria);
-        const linea = `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'uds'}\n`;
-        if ((parteActual + linea).length > 3000) {
-          partes.push(parteActual);
-          parteActual = `⚠️ _(inventario bajo — continuación)_\n\n`;
-        }
-        parteActual += linea;
-      }
-      partes.push(parteActual + `\n─────────────────\n🤖 _Reporte automático — Chu_`);
+      // generarMensajeAlertasCompleto puede retornar string o {tipo:'mensajes',partes:[...]}
+      const partes = resultado?.tipo === 'mensajes'
+        ? resultado.partes
+        : [typeof resultado === 'string' ? resultado : '❌ Sin datos de inventario'];
 
       for (const parte of partes) {
-        await notificar('⚠️ Inventario Bajo', parte);
+        await notificar('📦 Inventario', parte);
       }
     } catch(e) {
       console.error('Error inventario matutino:', e.message);

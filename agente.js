@@ -1064,36 +1064,15 @@ async function reporteGeneral() {
 
     msg += `\n─────────────────\n🤖 _Asistente de Chu Vanegas_`;
 
-    // Inventario bajo — todos, dividido en partes separadas
+    // Inventario completo organizado por M/F/U
     const partesMsgs = [msg];
     try {
-      const alertas = await monitor.consultarAlertasInventario();
-      // Agotados primero (saldo=0), luego críticos, luego bajos
-      const bajos = [...(alertas?.alertasGramos || []), ...(alertas?.alertasUnidades || [])]
-        .sort((a, b) => {
-          if (a.saldo === 0 && b.saldo > 0) return -1;
-          if (b.saldo === 0 && a.saldo > 0) return 1;
-          return a.saldo - b.saldo;
-        });
-
-      if (bajos.length > 0) {
-        const agotados = bajos.filter(p => p.saldo <= 0);
-        const enc = `⚠️ *INVENTARIO BAJO (${bajos.length} productos)*\n` +
-          (agotados.length > 0 ? `🚨 *${agotados.length} AGOTADOS*\n` : '') + `\n`;
-        let parteInv = enc;
-        for (const p of bajos) {
-          const nivel = monitor.getNivelAlerta(p.nombre, p.medida, p.saldo, p.categoria);
-          const linea = `${nivel} *${p.nombre}*: ${p.saldo} ${p.medida || 'uds'}\n`;
-          if ((parteInv + linea).length > 3500) {
-            partesMsgs.push(parteInv);
-            parteInv = `⚠️ _(inventario bajo — continuación)_\n\n`;
-          }
-          parteInv += linea;
-        }
-        partesMsgs.push(parteInv);
-      } else {
-        partesMsgs[0] += `\n✅ *Inventario: sin alertas*`;
-      }
+      const todoInv = await monitor.consultarTodoInventario();
+      const resultado = monitor.generarMensajeAlertasCompleto(todoInv);
+      const partesInv = resultado?.tipo === 'mensajes'
+        ? resultado.partes
+        : (typeof resultado === 'string' ? [resultado] : []);
+      partesMsgs.push(...partesInv);
     } catch(e) { /* inventario opcional */ }
 
     if (partesMsgs.length === 1) return partesMsgs[0];
