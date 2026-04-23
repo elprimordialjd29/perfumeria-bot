@@ -145,13 +145,27 @@ const PUPPETEER_ARGS = [
   '--no-sandbox', '--disable-setuid-sandbox',
   '--disable-gpu', '--disable-dev-shm-usage',
   '--disable-software-rasterizer',
-  ...(process.platform === 'linux' ? ['--no-zygote', '--single-process'] : []),
+  '--disable-extensions',
+  '--disable-background-networking',
+  '--disable-default-apps',
+  '--mute-audio',
+  '--no-first-run',
+  ...(process.platform === 'linux' ? [
+    '--no-zygote',
+    '--single-process',
+    '--disable-features=IsolateOrigins,site-per-process',
+  ] : []),
 ];
 
 async function lanzarBrowser() {
   await _acquireBrowser();
   try {
-    const browser = await puppeteer.launch({ headless: true, args: PUPPETEER_ARGS });
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: PUPPETEER_ARGS,
+      protocolTimeout: 120000,   // 2 min — evita "Network.enable timed out" en Railway
+      timeout: 60000,            // timeout de lanzamiento del proceso Chrome
+    });
     const _close = browser.close.bind(browser);
     browser.close = async () => { await _close(); _releaseBrowser(); };
     return browser;
