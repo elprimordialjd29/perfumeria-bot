@@ -245,9 +245,11 @@ async function crearBrowserLogueado(intentos = 0) {
     throw new Error('Faltan VECTORPOS_USER y VECTORPOS_PASS en el .env');
   }
 
-  const browser = await lanzarBrowser();
-
+  // lanzarBrowser() DENTRO del try para que los errores de puppeteer.launch()
+  // (e.g. "Network.enable timed out") pasen por el catch y activen auto-reparación
+  let browser = null;
   try {
+    browser = await lanzarBrowser();
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
     await page.setViewport({ width: 1280, height: 800 });
@@ -273,38 +275,40 @@ async function crearBrowserLogueado(intentos = 0) {
 
     return { browser, page };
   } catch (e) {
-    try { await browser.close(); } catch(_) {}
+    // Cerrar browser solo si llegó a lanzarse
+    if (browser) { try { await browser.close(); } catch(_) {} }
 
     // ── Clasificar el error para diagnóstico ──
     const msg = e.message || '';
     let tipo = 'desconocido';
-    if (msg.includes('Credenciales'))                tipo = 'credenciales';
-    else if (/net::|ERR_NAME_NOT_RESOLVED/i.test(msg)) tipo = 'red';
-    else if (/ERR_CONNECTION_REFUSED/i.test(msg))      tipo = 'servidor_caido';
-    else if (/timeout|Navigation|Protocol/i.test(msg)) tipo = 'timeout';
-    else if (/spawn|ENOMEM|Cannot fork/i.test(msg))    tipo = 'recursos';
+    if (msg.includes('Credenciales'))                              tipo = 'credenciales';
+    else if (/net::|ERR_NAME_NOT_RESOLVED/i.test(msg))            tipo = 'red';
+    else if (/ERR_CONNECTION_REFUSED/i.test(msg))                 tipo = 'servidor_caido';
+    else if (/Network\.enable|Protocol.*timed out/i.test(msg))    tipo = 'protocolo';   // CDP timeout
+    else if (/timeout|Navigation/i.test(msg))                     tipo = 'timeout';
+    else if (/spawn|ENOMEM|Cannot fork/i.test(msg))               tipo = 'recursos';
 
     _ultimoError = { tipo, mensaje: msg, fecha: new Date().toISOString(), intentos };
     console.error(`❌ VectorPOS login [${tipo}] intento ${intentos}:`, msg);
 
-    // Reintentar 1 vez en cold-start / timeout (no en errores definitivos)
+    // Reintentar 1 vez para timeout/protocolo/recursos (no en errores definitivos)
     if (intentos < 1 && !['credenciales', 'red', 'servidor_caido'].includes(tipo)) {
-      // Antes de reintentar: auto-reparar (matar Chrome zombie + reset semáforo)
-      console.log(`🔧 VectorPOS: auto-reparando antes de reintentar...`);
-      await autoReparar('login fallido');
-      await new Promise(r => setTimeout(r, 3000));
+      console.log(`🔧 VectorPOS [${tipo}]: auto-reparando antes de reintentar...`);
+      await autoReparar(`login fallido — ${tipo}`);
+      await new Promise(r => setTimeout(r, 5000));  // espera extra para Railway
       return crearBrowserLogueado(intentos + 1);
     }
 
-    // Notificar al admin si el error es persistente o definitivo
+    // Notificar al admin si el error persiste después del reintento
     if (tipo === 'credenciales') {
       _notificar('🔑 *Error VectorPOS:* Credenciales inválidas. Revisa VECTORPOS_USER y VECTORPOS_PASS en Railway.');
     } else if (tipo === 'servidor_caido') {
       _notificar('🔴 *VectorPOS no responde.* Puede estar caído. Verifica en https://pos.vectorpos.com.co');
     } else if (tipo === 'recursos') {
       _notificar('💾 *Error de recursos en Railway.* Chromium no pudo iniciar. El bot se auto-recuperará en el próximo intento.');
+    } else if (tipo === 'protocolo') {
+      _notificar('⚙️ *Timeout de protocolo CDP.* Chromium tardó demasiado en inicializar. Se reintentó 1 vez. Si persiste, usa /reconectar.');
     }
-    // timeout / desconocido: agente.js maneja los reintentos, no spamear
 
     throw e;
   }
