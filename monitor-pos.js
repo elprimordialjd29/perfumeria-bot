@@ -90,6 +90,19 @@ const _browserQueue = [];
 let _browserAdquiridoEn = null;   // timestamp de la última adquisición
 let _ultimoError = null;          // último error registrado para diagnóstico
 
+// Debounce de notificaciones de error: máx 1 notificación por tipo cada 30 min
+const _ultimaNotifError = {};
+const NOTIF_ERROR_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutos
+function _notificarError(tipo, mensaje) {
+  const ahora = Date.now();
+  if (_ultimaNotifError[tipo] && ahora - _ultimaNotifError[tipo] < NOTIF_ERROR_COOLDOWN_MS) {
+    console.log(`🔕 Notificación [${tipo}] suprimida (cooldown 30 min)`);
+    return;
+  }
+  _ultimaNotifError[tipo] = ahora;
+  _notificar(mensaje);
+}
+
 function _acquireBrowser(timeoutMs = 90000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -130,7 +143,7 @@ setInterval(async () => {
       const minutos = Math.round(bloqueadoMs / 60000);
       console.warn(`⚠️  WATCHDOG: Chromium bloqueado ${minutos}min — iniciando auto-reparación`);
       const { ok, pasos } = await autoReparar(`watchdog ${minutos}min`);
-      _notificar(
+      _notificarError('watchdog',
         `🔧 *Auto-reparación ejecutada* (Chromium bloqueado ${minutos} min)\n\n` +
         pasos.map(p => `• ${p}`).join('\n') + '\n\n' +
         (ok ? `✅ VectorPOS accesible. Intenta tu consulta de nuevo.`
@@ -299,15 +312,15 @@ async function crearBrowserLogueado(intentos = 0) {
       return crearBrowserLogueado(intentos + 1);
     }
 
-    // Notificar al admin si el error persiste después del reintento
+    // Notificar al admin si el error persiste después del reintento (con cooldown 30 min)
     if (tipo === 'credenciales') {
-      _notificar('🔑 *Error VectorPOS:* Credenciales inválidas. Revisa VECTORPOS_USER y VECTORPOS_PASS en Railway.');
+      _notificarError('credenciales', '🔑 *Error VectorPOS:* Credenciales inválidas. Revisa VECTORPOS_USER y VECTORPOS_PASS en Railway.');
     } else if (tipo === 'servidor_caido') {
-      _notificar('🔴 *VectorPOS no responde.* Puede estar caído. Verifica en https://pos.vectorpos.com.co');
+      _notificarError('servidor_caido', '🔴 *VectorPOS no responde.* Puede estar caído. Verifica en https://pos.vectorpos.com.co');
     } else if (tipo === 'recursos') {
-      _notificar('💾 *Error de recursos en Railway.* Chromium no pudo iniciar. El bot se auto-recuperará en el próximo intento.');
+      _notificarError('recursos', '💾 *Error de recursos en Railway.* Chromium no pudo iniciar. El bot se auto-recuperará en el próximo intento.');
     } else if (tipo === 'protocolo') {
-      _notificar('⚙️ *Timeout de protocolo CDP.* Chromium tardó demasiado en inicializar. Se reintentó 1 vez. Si persiste, usa /reconectar.');
+      _notificarError('protocolo', '⚙️ *Timeout de protocolo CDP.* Chromium tardó demasiado en inicializar. Se reintentó 1 vez. Si persiste, usa /reconectar.');
     }
 
     throw e;

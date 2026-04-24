@@ -41,8 +41,8 @@ function iniciar(bot) {
     await detectarApertura();
   }, { timezone: 'America/Bogota' });
 
-  // ── Alerta de nuevas ventas: cada 5 minutos ──
-  cron.schedule('*/5 * * * *', async () => {
+  // ── Alerta de nuevas ventas: cada 15 minutos ──
+  cron.schedule('*/15 * * * *', async () => {
     await detectarNuevaVenta();
   }, { timezone: 'America/Bogota' });
 
