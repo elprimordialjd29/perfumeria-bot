@@ -18,8 +18,11 @@ const BASE = 'https://pos.vectorpos.com.co';
 // ──────────────────────────────────────────────
 function _matarChromesZombie() {
   return new Promise(resolve => {
-    // En Railway (Linux) matar cualquier chromium/chrome colgado
-    exec('pkill -9 -f "chromium|chrome" 2>/dev/null; true', { timeout: 5000 }, () => resolve());
+    // Matar todos los procesos chromium/chrome y limpiar archivos temporales
+    const cmd = process.platform === 'linux'
+      ? 'pkill -9 -f "chromium|chrome" 2>/dev/null; rm -f /tmp/.org.chromium.Chromium.* /tmp/puppeteer* 2>/dev/null; true'
+      : 'taskkill /F /IM chrome.exe /IM chromium.exe 2>nul & exit 0';
+    exec(cmd, { timeout: 8000 }, () => resolve());
   });
 }
 
@@ -40,26 +43,27 @@ async function autoReparar(motivo = '') {
   console.log(`🔧 Auto-reparación iniciada${motivo ? ': ' + motivo : ''}...`);
   const pasos = [];
 
-  // 1. Matar Chrome zombie
+  // 1. Matar Chrome zombie + limpiar temporales
   await _matarChromesZombie();
-  pasos.push('🔪 Procesos Chrome zombie eliminados');
+  pasos.push('🔪 Chrome zombie eliminados + temporales limpios');
 
-  // 2. Resetear semáforo
+  // 2. Resetear semáforo y cola
   const slotsAntes = _browserSlots;
   const colaAntes  = _browserQueue.length;
   _browserSlots = 0;
   _browserAdquiridoEn = null;
-  // Vaciar cola para que no queden peticiones viejas bloqueadas
   _browserQueue.length = 0;
-  pasos.push(`♻️ Semáforo reseteado (slots: ${slotsAntes} → 0, cola: ${colaAntes} → 0)`);
+  pasos.push(`♻️ Semáforo reseteado (slots: ${slotsAntes}→0, cola: ${colaAntes}→0)`);
 
-  // 3. Probar conectividad a VectorPOS
+  // 3. Esperar a que el SO libere memoria
+  await new Promise(r => setTimeout(r, 3000));
+  pasos.push('⏱️ Memoria liberada (3s)');
+
+  // 4. Probar conectividad a VectorPOS
   const conn = await _testConectividadVectorPOS();
-  if (conn.ok) {
-    pasos.push(`🌐 VectorPOS accesible (HTTP ${conn.status})`);
-  } else {
-    pasos.push(`⚠️ VectorPOS no responde: ${conn.error}`);
-  }
+  pasos.push(conn.ok
+    ? `🌐 VectorPOS accesible (HTTP ${conn.status})`
+    : `⚠️ VectorPOS no responde: ${conn.error}`);
 
   console.log('✅ Auto-reparación completada:', pasos.join(' | '));
   return { ok: conn.ok, pasos };
@@ -291,36 +295,53 @@ async function crearBrowserLogueado(intentos = 0) {
     // Cerrar browser solo si llegó a lanzarse
     if (browser) { try { await browser.close(); } catch(_) {} }
 
-    // ── Clasificar el error para diagnóstico ──
+    // ── Clasificar el error ──
     const msg = e.message || '';
     let tipo = 'desconocido';
-    if (msg.includes('Credenciales'))                              tipo = 'credenciales';
-    else if (/net::|ERR_NAME_NOT_RESOLVED/i.test(msg))            tipo = 'red';
-    else if (/ERR_CONNECTION_REFUSED/i.test(msg))                 tipo = 'servidor_caido';
-    else if (/Network\.enable|Protocol.*timed out/i.test(msg))    tipo = 'protocolo';   // CDP timeout
-    else if (/timeout|Navigation/i.test(msg))                     tipo = 'timeout';
-    else if (/spawn|ENOMEM|Cannot fork/i.test(msg))               tipo = 'recursos';
+    if (msg.includes('Credenciales'))                           tipo = 'credenciales';
+    else if (/net::|ERR_NAME_NOT_RESOLVED/i.test(msg))         tipo = 'red';
+    else if (/ERR_CONNECTION_REFUSED/i.test(msg))              tipo = 'servidor_caido';
+    else if (/Network\.enable|Protocol.*timed out/i.test(msg)) tipo = 'protocolo';
+    else if (/timeout|Navigation/i.test(msg))                  tipo = 'timeout';
+    else if (/spawn|ENOMEM|Cannot fork/i.test(msg))            tipo = 'recursos';
 
     _ultimoError = { tipo, mensaje: msg, fecha: new Date().toISOString(), intentos };
-    console.error(`❌ VectorPOS login [${tipo}] intento ${intentos}:`, msg);
+    console.error(`❌ VectorPOS [${tipo}] intento ${intentos + 1}:`, msg);
 
-    // Reintentar 1 vez para timeout/protocolo/recursos (no en errores definitivos)
-    if (intentos < 1 && !['credenciales', 'red', 'servidor_caido'].includes(tipo)) {
-      console.log(`🔧 VectorPOS [${tipo}]: auto-reparando antes de reintentar...`);
-      await autoReparar(`login fallido — ${tipo}`);
-      await new Promise(r => setTimeout(r, 5000));  // espera extra para Railway
-      return crearBrowserLogueado(intentos + 1);
+    // ── Tabla de auto-reparación por tipo de error ──
+    // Errores definitivos → no reintentar
+    const DEFINITIVOS = ['credenciales', 'red', 'servidor_caido'];
+    // Reintentos máximos y espera (backoff acumulativo)
+    const REINTENTOS = { recursos: 4, protocolo: 3, timeout: 2, desconocido: 1 };
+    const ESPERA_MS  = { recursos: 12000, protocolo: 8000, timeout: 6000, desconocido: 4000 };
+
+    const maxReintentos = REINTENTOS[tipo] || 0;
+    const esperaBase    = ESPERA_MS[tipo]  || 4000;
+
+    if (!DEFINITIVOS.includes(tipo) && intentos < maxReintentos) {
+      const espera = esperaBase * (intentos + 1); // backoff: 12s, 24s, 36s, 48s...
+      console.log(`🔧 [${tipo}] Auto-reparando... reintento ${intentos + 1}/${maxReintentos} en ${espera / 1000}s`);
+      await autoReparar(`${tipo} — intento ${intentos + 1}`);
+      await new Promise(r => setTimeout(r, espera));
+      return crearBrowserLogueado(intentos + 1); // reintento automático
     }
 
-    // Notificar al admin si el error persiste después del reintento (con cooldown 30 min)
+    // ── Todos los reintentos agotados → notificar UNA vez con cooldown ──
     if (tipo === 'credenciales') {
-      _notificarError('credenciales', '🔑 *Error VectorPOS:* Credenciales inválidas. Revisa VECTORPOS_USER y VECTORPOS_PASS en Railway.');
+      _notificarError('credenciales',
+        '🔑 *Error VectorPOS:* Credenciales inválidas.\nRevisa VECTORPOS_USER y VECTORPOS_PASS en Railway.');
     } else if (tipo === 'servidor_caido') {
-      _notificarError('servidor_caido', '🔴 *VectorPOS no responde.* Puede estar caído. Verifica en https://pos.vectorpos.com.co');
+      _notificarError('servidor_caido',
+        '🔴 *VectorPOS no responde.* Puede estar caído.\nVerifica en https://pos.vectorpos.com.co');
     } else if (tipo === 'recursos') {
-      _notificarError('recursos', '💾 *Error de recursos en Railway.* Chromium no pudo iniciar. El bot se auto-recuperará en el próximo intento.');
+      _notificarError('recursos',
+        `💾 *Railway sin recursos* — Chromium no pudo iniciar después de ${maxReintentos} intentos automáticos.\nUsa /reconectar cuando el servidor libere memoria.`);
     } else if (tipo === 'protocolo') {
-      _notificarError('protocolo', '⚙️ *Timeout de protocolo CDP.* Chromium tardó demasiado en inicializar. Se reintentó 1 vez. Si persiste, usa /reconectar.');
+      _notificarError('protocolo',
+        `⚙️ *Timeout de protocolo CDP* después de ${maxReintentos} reintentos.\nUsa /reconectar o espera unos minutos.`);
+    } else if (tipo === 'timeout') {
+      _notificarError('timeout',
+        `⏱️ *Timeout de conexión* a VectorPOS después de ${maxReintentos} reintentos.\nEl sistema se recuperará solo en el próximo intento.`);
     }
 
     throw e;
