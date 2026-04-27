@@ -250,11 +250,14 @@ function parsearMontoJSON(val) {
 // LOGIN CON PUPPETEER
 // ──────────────────────────────────────────────
 
-async function crearSesionPOS() {
-  return await crearBrowserLogueado();
+// background:true → falla rápido sin reintentos ni notificaciones (crons de fondo)
+// background:false → reintenta con auto-reparación y notifica si no puede (peticiones usuario)
+async function crearSesionPOS(opciones = {}) {
+  return await crearBrowserLogueado(0, opciones);
 }
 
-async function crearBrowserLogueado(intentos = 0) {
+async function crearBrowserLogueado(intentos = 0, opciones = {}) {
+  const { background = false } = opciones;
   const user = process.env.VECTORPOS_USER;
   const pass = process.env.VECTORPOS_PASS;
 
@@ -315,6 +318,14 @@ async function crearBrowserLogueado(intentos = 0) {
     const REINTENTOS = { recursos: 4, protocolo: 3, timeout: 2, desconocido: 1 };
     const ESPERA_MS  = { recursos: 12000, protocolo: 8000, timeout: 6000, desconocido: 4000 };
 
+    // Tareas de fondo: fallan rápido sin reintentos ni spam
+    // Solo limpian Chrome zombie para no dejar residuos y lanzan el error
+    if (background) {
+      if (!DEFINITIVOS.includes(tipo)) await autoReparar(`bg-silencioso:${tipo}`);
+      console.log(`🔕 [bg] Error ${tipo} ignorado silenciosamente — próximo ciclo reintentará`);
+      throw e;
+    }
+
     const maxReintentos = REINTENTOS[tipo] || 0;
     const esperaBase    = ESPERA_MS[tipo]  || 4000;
 
@@ -323,7 +334,7 @@ async function crearBrowserLogueado(intentos = 0) {
       console.log(`🔧 [${tipo}] Auto-reparando... reintento ${intentos + 1}/${maxReintentos} en ${espera / 1000}s`);
       await autoReparar(`${tipo} — intento ${intentos + 1}`);
       await new Promise(r => setTimeout(r, espera));
-      return crearBrowserLogueado(intentos + 1); // reintento automático
+      return crearBrowserLogueado(intentos + 1, opciones); // reintento automático
     }
 
     // ── Todos los reintentos agotados → notificar UNA vez con cooldown ──

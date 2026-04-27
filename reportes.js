@@ -155,7 +155,7 @@ async function enviarReporteMatutino() {
     const medallas = ['🥇', '🥈', '🥉'];
 
     // ── 1. Ventas de ayer (cajeros + productos) ──
-    const { browser: b1, page: p1 } = await monitor.crearSesionPOS();
+    const { browser: b1, page: p1 } = await monitor.crearSesionPOS({ background: true });
     const cajerosAyer   = await monitor.extraerVentasCajero(p1, fAyer, fAyer);
     const productosAyer = await monitor.extraerVentasProducto(p1, fAyer, fAyer);
     await b1.close();
@@ -278,7 +278,7 @@ async function enviarReporteSemanal() {
     const desde = lunes.toISOString().split('T')[0];
     const hasta = monitor.fechaHoy();
 
-    const { browser, page } = await monitor.crearSesionPOS();
+    const { browser, page } = await monitor.crearSesionPOS({ background: true });
     const ventas = await monitor.extraerVentasGenerales(page, desde, hasta);
     const cajeros = await monitor.extraerVentasCajero(page, desde, hasta);
     await browser.close();
@@ -334,7 +334,7 @@ async function detectarNuevoCierre() {
     let ultimoTurnoConocido = cfg?.ultimo_cierre || '';
 
     // Obtener cierres de hoy
-    const { browser, page } = await monitor.crearSesionPOS();
+    const { browser, page } = await monitor.crearSesionPOS({ background: true });
     const cierres = await monitor.extraerCierresCaja(page, hoy, hoy);
 
     if (!cierres.length) { await browser.close(); return; }
@@ -421,7 +421,7 @@ async function detectarApertura() {
     const cfg = await db.obtenerConfig();
     if (cfg?.ultima_apertura_fecha === hoy) return; // ya notificado hoy
 
-    const { browser, page } = await monitor.crearSesionPOS();
+    const { browser, page } = await monitor.crearSesionPOS({ background: true });
     const cajeros  = await monitor.extraerVentasCajero(page, hoy, hoy);
     const porHora  = await monitor.extraerVentasPorHora(page, hoy, hoy);
     const productos = await monitor.extraerVentasProducto(page, hoy, hoy);
@@ -489,7 +489,7 @@ async function detectarNuevaVenta() {
       ? parseFloat(cfg?.ultimo_total_ventas || '0')
       : 0;
 
-    const { browser, page } = await monitor.crearSesionPOS();
+    const { browser, page } = await monitor.crearSesionPOS({ background: true });
     const cajeros  = await monitor.extraerVentasCajero(page, hoy, hoy);
     const productos = await monitor.extraerVentasProducto(page, hoy, hoy);
     await browser.close();
@@ -567,7 +567,7 @@ async function enviarReporteMediodia() {
     const diasEnMes  = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
     const metaDiaria = Math.round(meta / diasEnMes);
 
-    const { browser, page } = await monitor.crearSesionPOS();
+    const { browser, page } = await monitor.crearSesionPOS({ background: true });
     const cajeros   = await monitor.extraerVentasCajero(page, hoy, hoy);
     const porHora   = await monitor.extraerVentasPorHora(page, hoy, hoy);
     const productos = await monitor.extraerVentasProducto(page, hoy, hoy);
