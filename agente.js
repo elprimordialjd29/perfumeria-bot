@@ -545,7 +545,7 @@ async function procesarMensaje(texto, esAdmin = true) {
   // ── Intentar Claude Haiku primero ──
   try {
     const resp = await claude.messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 500,
       system: systemFull,
       messages: historial,
