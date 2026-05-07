@@ -211,7 +211,7 @@ bot.on('message', async (msg) => {
   }, 4000);
 
   // Timeout: 3 min para comandos POS (cold-start), 95s para el resto
-  const TIMEOUT_MS = esComandoPOS ? 180000 : 95000;
+  const TIMEOUT_MS = esComandoPOS ? 90000 : 60000;
   const _timeoutPromise = new Promise((_, rej) =>
     setTimeout(() => rej(new Error('__TIMEOUT_GLOBAL__')), TIMEOUT_MS)
   );
