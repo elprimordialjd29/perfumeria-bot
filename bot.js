@@ -456,6 +456,26 @@ module.exports = { bot, enviarMensaje, ADMIN_ID };
 
 iniciar();
 
+// ──────────────────────────────────────────────
+// RESILIENCIA — capturar cualquier error no manejado
+// ──────────────────────────────────────────────
+
+process.on('uncaughtException', (err) => {
+  console.error('❌ uncaughtException:', err.message);
+  console.error(err.stack);
+  try {
+    bot.sendMessage(ADMIN_ID, `⚠️ *Error interno (bot sigue activo):*\n\`${err.message.substring(0, 200)}\``, { parse_mode: 'Markdown' }).catch(() => {});
+  } catch(_) {}
+});
+
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  console.error('❌ unhandledRejection:', msg);
+  try {
+    bot.sendMessage(ADMIN_ID, `⚠️ *Promesa rechazada (bot sigue activo):*\n\`${msg.substring(0, 200)}\``, { parse_mode: 'Markdown' }).catch(() => {});
+  } catch(_) {}
+});
+
 process.on('SIGTERM', async () => {
   console.log('👋 Cerrando Chu (SIGTERM)...');
   if (!USE_WEBHOOK) bot.stopPolling();
