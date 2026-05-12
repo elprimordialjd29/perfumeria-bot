@@ -234,6 +234,11 @@ bot.on('message', async (msg) => {
       for (const parte of respuesta.partes) {
         await enviarMensaje(chatId, parte);
       }
+    } else if (respuesta && typeof respuesta === 'object' && respuesta.tipo === 'menu_redes') {
+      await bot.sendMessage(chatId, respuesta.texto, {
+        parse_mode: 'Markdown',
+        reply_markup: respuesta.reply_markup,
+      }).catch(() => bot.sendMessage(chatId, respuesta.texto));
     } else {
       await enviarMensaje(chatId, respuesta);
     }
