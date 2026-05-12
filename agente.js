@@ -593,8 +593,10 @@ async function ejecutarAccion(rawOriginal) {
     }
 
     // ── Contenido redes sociales ──
-    if (raw.startsWith('[CONTENIDO_HOY]')) return await checklistContenidoHoy();
+    if (raw.startsWith('[CONTENIDO_HOY]')) return await checklistContenidoHoyConMenu();
     if (raw.startsWith('[CONTENIDO_SEMANA]')) return await checklistContenidoSemana();
+    if (raw.startsWith('[PLAN_REDES_PROXIMA]')) return await planContenidoSemana(7);
+    if (raw.startsWith('[PLAN_REDES]')) return await planContenidoSemana(0);
     if (raw.startsWith('[CONTENIDO_MARCAR:')) {
       const red = raw.match(/\[CONTENIDO_MARCAR:(\w+)\]/)?.[1];
       if (red) return await marcarContenidoDirecto(red);
@@ -1578,6 +1580,22 @@ async function checklistContenidoHoy() {
   }
 
   return msg;
+}
+
+async function checklistContenidoHoyConMenu() {
+  const texto = await checklistContenidoHoy();
+  return {
+    tipo: 'menu_redes',
+    texto,
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '📋 Plan esta semana',    callback_data: 'redes_plan_actual' },
+          { text: '📋 Plan próxima semana', callback_data: 'redes_plan_proxima' },
+        ],
+      ],
+    },
+  };
 }
 
 async function checklistContenidoSemana() {
