@@ -758,6 +758,31 @@ async function enviarRecordatorioContenido(red) {
 
 async function manejarCallbackContenido(bot, callbackQuery) {
   const data = callbackQuery.data;
+
+  // ── Botones de plan de redes ──
+  if (data === 'redes_plan_actual' || data === 'redes_plan_proxima') {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: '⏳ Generando plan...' });
+    const chatId = callbackQuery.message.chat.id;
+    const agente = require('./agente');
+    try {
+      const tag = data === 'redes_plan_proxima' ? '[PLAN_REDES_PROXIMA]' : '[PLAN_REDES]';
+      const respuesta = await agente.procesarMensaje(tag, true);
+      if (respuesta && typeof respuesta === 'object' && respuesta.tipo === 'mensajes') {
+        for (const parte of respuesta.partes) {
+          await bot.sendMessage(chatId, parte, { parse_mode: 'Markdown' })
+            .catch(() => bot.sendMessage(chatId, parte));
+        }
+      } else {
+        const texto = typeof respuesta === 'string' ? respuesta : JSON.stringify(respuesta);
+        await bot.sendMessage(chatId, texto, { parse_mode: 'Markdown' })
+          .catch(() => bot.sendMessage(chatId, texto));
+      }
+    } catch(e) {
+      await bot.sendMessage(chatId, '❌ No pude generar el plan. Intenta de nuevo.');
+    }
+    return true;
+  }
+
   if (!data.startsWith('cnt_ok_')) return false;
 
   const parts = data.replace('cnt_ok_', '').split('_');
